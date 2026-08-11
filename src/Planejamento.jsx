@@ -79,7 +79,7 @@ export default function Planejamento({ podeEditar }) {
         const k = `${cic}|${u}|${p.id}`;
         return { p, vagas: g(st.funil, k, "vagas"), insc: g(st.funil, k, "insc"), pagas: g(st.funil, k, "pagas"), matric: g(st.funil, k, "matric") };
       });
-      const T = linhas.reduce((a, l) => ({ vagas: a.vagas + l.vagas, insc: a.insc + l.insc, pagas: a.pagas + l.pagas, matric: a.matric + l.matric }), { vagas: 0, insc: 0, pagas: 0, matric: 0 });
+      const T = linhas.reduce((a, l) => ({ vagas: a.vagas + l.vagas, insc: a.insc + l.insc, pagas: a.pagas + l.pagas, matric: a.matric + l.matric, matricOcupa: a.matricOcupa + (l.p.ocupaVaga !== false ? l.matric : 0) }), { vagas: 0, insc: 0, pagas: 0, matric: 0, matricOcupa: 0 });
       return { linhas, T, temDado: T.insc + T.pagas + T.matric > 0 };
     };
     const cicloCanal = (cic, u) => {
@@ -194,11 +194,14 @@ export default function Planejamento({ podeEditar }) {
             <thead><tr><th>Processo</th><th>Vagas</th><th>Inscrições</th><th>Pagas</th><th>Matrículas</th><th>Taxa pagto</th><th>Paga→Mat</th><th>Insc→Mat</th><th>Share</th><th>Vaga ociosa</th></tr></thead>
             <tbody>
               {cu.linhas.map((l) => { const k = `${ciclo}|${uni}|${l.p.id}`; const d = st.funil[k] || {};
-                const va = vagaAuto(l.p.id);
-                const vagaMostrada = va ? va.valor : num(d.vagas);
+                const ocupa = l.p.ocupaVaga !== false;
+                const va = ocupa ? vagaAuto(l.p.id) : null;
+                const vagaMostrada = ocupa ? (va ? va.valor : num(d.vagas)) : 0;
                 const ocioso = vagaMostrada - num(l.matric);
-                return <tr key={l.p.id}><td>{l.p.nome}{/FIES/i.test(l.p.nome) && <span className="pc-tag">FIES</span>}</td>
-                  <td>{va
+                return <tr key={l.p.id}><td>{l.p.nome}{/FIES/i.test(l.p.nome) && <span className="pc-tag">FIES</span>}{!ocupa && <span className="pc-tag" style={{ background: "#F0EAF5", color: "#6B4A8A" }}>não ocupa vaga</span>}</td>
+                  <td>{!ocupa
+                    ? <span className="m mut">—</span>
+                    : va
                     ? <span className="m" title={va.origem} style={{ color: "#0F5F4E", cursor: "help", borderBottom: "1px dotted #0F5F4E" }}>{f0(va.valor)}</span>
                     : <Cell w={60} value={d.vagas} onChange={(v) => setFunilLocal(k, "vagas", v, uni, l.p.id)} />}</td>
                   <td><Cell value={d.insc} onChange={(v) => setFunilLocal(k, "insc", v, uni, l.p.id)} /></td>
@@ -207,9 +210,9 @@ export default function Planejamento({ podeEditar }) {
                   <td className="m">{pct(div(l.pagas, l.insc))}</td><td className="m">{pct(div(l.matric, l.pagas))}</td>
                   <td className="m mut">{pct(div(l.matric, l.insc))}</td>
                   <td className="m"><b>{pct(div(l.matric, cu.T.matric))}</b></td>
-                  <td className="m" style={{ color: ocioso > 0 ? "#8A6100" : "#4A5C57" }}>{vagaMostrada > 0 ? f0(ocioso) : "—"}</td></tr>; })}
+                  <td className="m" style={{ color: ocioso > 0 ? "#8A6100" : "#4A5C57" }}>{ocupa && vagaMostrada > 0 ? f0(ocioso) : "—"}</td></tr>; })}
             </tbody>
-            <tfoot><tr><td>Total</td><td className="m">{f0(cu.T.vagas)}</td><td className="m">{f0(cu.T.insc)}</td><td className="m">{f0(cu.T.pagas)}</td><td className="m">{f0(cu.T.matric)}</td><td className="m">{pct(div(cu.T.pagas, cu.T.insc))}</td><td className="m">{pct(div(cu.T.matric, cu.T.pagas))}</td><td className="m">{pct(div(cu.T.matric, cu.T.insc))}</td><td>100%</td><td className="m">{f0(cu.T.vagas - cu.T.matric)}</td></tr></tfoot>
+            <tfoot><tr><td>Total</td><td className="m">{f0(cu.T.vagas)}</td><td className="m">{f0(cu.T.insc)}</td><td className="m">{f0(cu.T.pagas)}</td><td className="m">{f0(cu.T.matric)}</td><td className="m">{pct(div(cu.T.pagas, cu.T.insc))}</td><td className="m">{pct(div(cu.T.matric, cu.T.pagas))}</td><td className="m">{pct(div(cu.T.matric, cu.T.insc))}</td><td>100%</td><td className="m">{f0(cu.T.vagas - cu.T.matricOcupa)}</td></tr></tfoot>
           </table></div>
         </div>
       )}
@@ -218,20 +221,18 @@ export default function Planejamento({ podeEditar }) {
         <div className="pc-card">
           <div className="pc-h">Canais — {ciclo} · {uniNome(uni)}</div>
           <div className="pc-scroll"><table className="pc-t">
-            <thead><tr><th>Canal</th><th>Investimento</th><th>Leads</th><th>Pagas</th><th>Matrículas</th><th>CPL</th><th>Custo/paga</th><th>CAC</th><th>Share</th></tr></thead>
+            <thead><tr><th>Canal</th><th>Investimento</th><th>Leads</th><th>Matrículas</th><th>CPL</th><th>CAC</th><th>Share</th></tr></thead>
             <tbody>
               {cc.linhas.map((l) => { const k = `${ciclo}|${uni}|${l.c.id}`; const d = st.canal[k] || {};
                 return <tr key={l.c.id}><td>{l.c.nome}{!l.c.pago && <span className="pc-tag">sem verba</span>}</td>
                   <td><Cell w={110} value={d.inv} onChange={(v) => setCanalLocal(k, "inv", v, uni, l.c.id)} /></td>
                   <td><Cell value={d.leads} onChange={(v) => setCanalLocal(k, "leads", v, uni, l.c.id)} /></td>
-                  <td><Cell value={d.pagas} onChange={(v) => setCanalLocal(k, "pagas", v, uni, l.c.id)} /></td>
                   <td><Cell value={d.matric} onChange={(v) => setCanalLocal(k, "matric", v, uni, l.c.id)} /></td>
                   <td className="m">{isFinite(div(l.inv, l.leads)) ? brl(div(l.inv, l.leads)) : "—"}</td>
-                  <td className="m">{isFinite(div(l.inv, l.pagas)) ? brl(div(l.inv, l.pagas)) : "—"}</td>
                   <td className="m"><b>{isFinite(div(l.inv, l.matric)) ? brl(div(l.inv, l.matric)) : "—"}</b></td>
                   <td className="m">{pct(div(l.matric, cc.T.matric))}</td></tr>; })}
             </tbody>
-            <tfoot><tr><td>Total</td><td className="m">{brl(cc.T.inv)}</td><td className="m">{f0(cc.T.leads)}</td><td className="m">{f0(cc.T.pagas)}</td><td className="m">{f0(cc.T.matric)}</td><td colSpan={2}></td><td className="m">{isFinite(div(cc.T.inv, cc.T.matric)) ? brl(div(cc.T.inv, cc.T.matric)) : "—"}</td><td>100%</td></tr></tfoot>
+            <tfoot><tr><td>Total</td><td className="m">{brl(cc.T.inv)}</td><td className="m">{f0(cc.T.leads)}</td><td className="m">{f0(cc.T.matric)}</td><td></td><td className="m">{isFinite(div(cc.T.inv, cc.T.matric)) ? brl(div(cc.T.inv, cc.T.matric)) : "—"}</td><td>100%</td></tr></tfoot>
           </table></div>
         </div>
       )}

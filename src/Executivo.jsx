@@ -111,8 +111,13 @@ export default function Executivo() {
     let vagasTot = 0;
     alvoUnis.forEach((u) => { vagasTot += num((st.meta[`${cfg.alvo}|${u}`] || {}).vagas); });
 
+    // projeção que ocupa vaga (exclui transferências) — base da ociosidade
+    const ocupaVaga = (p) => p.ocupaVaga !== false;
+    const projOcupaVaga = st.processos.filter(ocupaVaga).reduce((a, p) => a + projAgg[p.id], 0);
+    const projNaoOcupa = projTotal - projOcupaVaga;
+
     return { linhas, histTotal, projTotal, metaTotal, metaHist, matrizShare, ciclosHistoricos, alvo: cfg.alvo, cenario: cfg.cenario, cicloHist,
-      projFies, projSelfPaid, histFies, histSelfPaid, convGlobalHist, vagasTot,
+      projFies, projSelfPaid, histFies, histSelfPaid, convGlobalHist, vagasTot, projOcupaVaga, projNaoOcupa,
       nomeUni: uniSel === "__holding__" ? "Holding (todas as unidades)" : (st.unidades.find((u) => u.id === uniSel) || {}).nome };
   }, [st, uniSel, cicloHist]);
 
@@ -171,8 +176,8 @@ export default function Executivo() {
         </div>
         <div style={kpiCard}>
           <div style={kpiRot}>Vaga ociosa</div>
-          <div style={{ ...kpiVal, color: (D.vagasTot - D.projTotal) > 0 ? "#8A6100" : "#4A5C57" }}>{D.vagasTot > 0 ? f0(D.vagasTot - D.projTotal) : "—"}</div>
-          <div style={kpiSub}>{D.vagasTot > 0 ? "vaga = meta · " + f0(D.vagasTot) + " vagas" : "defina vagas na aba Sistema"}</div>
+          <div style={{ ...kpiVal, color: (D.vagasTot - D.projOcupaVaga) > 0 ? "#8A6100" : "#4A5C57" }}>{D.vagasTot > 0 ? f0(D.vagasTot - D.projOcupaVaga) : "—"}</div>
+          <div style={kpiSub}>{D.vagasTot > 0 ? "vaga = meta · exclui transferências" : "defina vagas na aba Sistema"}</div>
         </div>
       </div>
 
