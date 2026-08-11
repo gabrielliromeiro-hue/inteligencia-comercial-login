@@ -44,7 +44,7 @@ export async function mudarAtivo(id, ativo) {
 
 // ---------- CARREGAR TUDO ----------
 export async function carregarTudo() {
-  const [uni, proc, can, funil, canal, metas, cfg] = await Promise.all([
+  const [uni, proc, can, funil, canal, metas, cfg, vagasC] = await Promise.all([
     supabase.from("unidades").select("*").order("ordem"),
     supabase.from("processos").select("*").order("ordem"),
     supabase.from("canais").select("*").order("ordem"),
@@ -52,12 +52,14 @@ export async function carregarTudo() {
     supabase.from("canal_hist").select("*"),
     supabase.from("metas").select("*"),
     supabase.from("config").select("*").single(),
+    supabase.from("vagas_ciclo").select("*"),
   ]);
   const err = [uni, proc, can, funil, canal, metas, cfg].find((r) => r.error);
   if (err) throw err.error;
 
   // reidrata para o formato do app
-  const funilMap = {}, canalMap = {}, metaMap = {};
+  const funilMap = {}, canalMap = {}, metaMap = {}, vagasMap = {};
+  (vagasC && vagasC.data || []).forEach((r) => { vagasMap[`${r.ciclo}|${r.unidade_id}`] = Number(r.vagas); });
   (funil.data || []).forEach((r) => {
     funilMap[`${r.ciclo}|${r.unidade_id}|${r.processo_id}`] = { vagas: r.vagas, insc: r.inscricoes, pagas: r.insc_pagas, aprovados: r.aprovados, convocados: r.convocados, matric: r.matriculas };
   });
@@ -79,7 +81,7 @@ export async function carregarTudo() {
     canais: (can.data || []).map((x) => ({ id: x.id, nome: x.nome, pago: x.pago, beta: Number(x.beta) })),
     ciclos: c.ciclos || ["2024.1", "2024.2", "2025.1", "2025.2", "2026.1", "2026.2"],
     alvos: c.alvos || ["2027.1", "2027.2", "2028.1"],
-    funil: funilMap, canal: canalMap, meta: metaMap,
+    funil: funilMap, canal: canalMap, meta: metaMap, vagasCiclo: vagasMap,
     cfg: {
       alvo: (c.alvos || ["2027.1"])[0], somenteHomologos: c.somente_homologos ?? true,
       saturacao: c.saturacao ?? true, pesos: c.pesos || [0.5, 0.3, 0.2],
@@ -111,6 +113,11 @@ export async function salvarMeta(alvo, uniId, m, procIds, canIds) {
   const row = { unidade_id: uniId, ciclo_alvo: alvo, vagas: n(m.vagas), meta_matriculas: n(m.matric),
     verba: n(m.verba), shares_processo: shP, shares_canal: shC, atualizado_em: new Date().toISOString() };
   const { error } = await supabase.from("metas").upsert(row, { onConflict: "unidade_id,ciclo_alvo" });
+  if (error) throw error;
+}
+export async function salvarVagaCiclo(ciclo, uniId, vagas) {
+  const row = { ciclo, unidade_id: uniId, vagas: n(vagas), atualizado_em: new Date().toISOString() };
+  const { error } = await supabase.from("vagas_ciclo").upsert(row, { onConflict: "unidade_id,ciclo" });
   if (error) throw error;
 }
 export async function salvarConfig(cfg, ciclos, alvos) {
