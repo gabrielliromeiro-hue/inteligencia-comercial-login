@@ -91,33 +91,76 @@ export default function Executivo() {
     let metaHist = 0;
     alvoUnis.forEach((u) => { metaHist += num((st.meta[`${cicloHist}|${u}`] || {}).matric); });
 
-    // FIES separado do self paid (previsto)
-    const ehFies = (nome) => /fies/i.test(nome || "");
-    const projFies = st.processos.filter((p) => ehFies(p.nome)).reduce((a, p) => a + projAgg[p.id], 0);
-    const projSelfPaid = projTotal - projFies;
-    // FIES separado (histórico do ciclo escolhido)
-    const histFies = histProc.filter((x) => ehFies(x.p.nome)).reduce((a, x) => a + x.mat, 0);
-    const histSelfPaid = histTotal - histFies;
+    // Classificação em grupos (regra do board)
+    // Self paid = Vestibular Tradicional + Agendado/Online + ENEM
+    // Demais grupos separados: FIES, Transferência, Transferência FIES, Recuperado
+    const grupoDe = (nome) => {
+      const n = (nome || "").toLowerCase();
+      if (n.includes("transfer") && n.includes("fies")) return "transfFies";
+      if (n.includes("transfer")) return "transf";
+      if (n.includes("recuper")) return "recuperado";
+      if (n.includes("fies")) return "fies";
+      if (n.includes("vestibular") || n.includes("enem")) return "selfpaid";
+      return "selfpaid"; // default: segunda graduação e afins entram como self paid (calouro pagante)
+    };
+    const somaGrupo = (fonteProj, fonteHistArr) => {
+      const G = { selfpaid: 0, fies: 0, transf: 0, transfFies: 0, recuperado: 0 };
+      st.processos.forEach((p) => { G[grupoDe(p.nome)] += fonteProj[p.id] || 0; });
+      const H = { selfpaid: 0, fies: 0, transf: 0, transfFies: 0, recuperado: 0 };
+      fonteHistArr.forEach((x) => { H[grupoDe(x.p.nome)] += x.mat; });
+      return { G, H };
+    };
+    const grp = somaGrupo(projAgg, histProc);
+    const projSelfPaid = grp.G.selfpaid, projFies = grp.G.fies, projTransf = grp.G.transf, projTransfFies = grp.G.transfFies, projRecuperado = grp.G.recuperado;
+    const histSelfPaid = grp.H.selfpaid, histFies = grp.H.fies, histTransf = grp.H.transf, histTransfFies = grp.H.transfFies, histRecuperado = grp.H.recuperado;
 
     // conversão global inscrito->matriculado (histórico do ciclo escolhido)
-    let inscHist = 0, matHistG = 0;
+    let inscHist = 0, matHistG = 0, invHist = 0;
     alvoUnis.forEach((u) => st.processos.forEach((p) => {
       inscHist += g(st.funil, `${cicloHist}|${u}|${p.id}`, "insc");
       matHistG += g(st.funil, `${cicloHist}|${u}|${p.id}`, "matric");
     }));
+    alvoUnis.forEach((u) => st.canais.forEach((c) => { invHist += g(st.canal, `${cicloHist}|${u}|${c.id}`, "inv"); }));
     const convGlobalHist = div(matHistG, inscHist);
+
+    // CAC, CPI e previsão de inscritos (projetados para o alvo)
+    // usa a razão histórica investimento/matrícula e investimento/inscrição, aplicada à meta
+    const cacHist = div(invHist, matHistG);
+    const cpiHist = div(invHist, inscHist);
+    const previsaoInscritos = st.processos.reduce((a, p) => {
+      // inscritos previstos = matrícula prevista / (conversão histórica do processo, aprox global)
+      return a + (isFinite(convGlobalHist) && convGlobalHist > 0 ? (projAgg[p.id] || 0) / convGlobalHist : 0);
+    }, 0);
 
     // vagas (= meta) e ociosidade da holding/unidade
     let vagasTot = 0;
     alvoUnis.forEach((u) => { vagasTot += num((st.meta[`${cfg.alvo}|${u}`] || {}).vagas); });
 
-    // projeção que ocupa vaga (exclui transferências) — base da ociosidade
+    // projeção que ocupa vaga (exclui transferências e recuperado) — base da ociosidade
     const ocupaVaga = (p) => p.ocupaVaga !== false;
     const projOcupaVaga = st.processos.filter(ocupaVaga).reduce((a, p) => a + projAgg[p.id], 0);
     const projNaoOcupa = projTotal - projOcupaVaga;
 
+    // Funil por etapa x processo (ciclo histórico escolhido)
+    const funilEtapas = st.processos.map((p) => {
+      let insc = 0, pagas = 0, aprov = 0, conv = 0, matric = 0;
+      alvoUnis.forEach((u) => {
+        const k = `${cicloHist}|${u}|${p.id}`;
+        insc += g(st.funil, k, "insc"); pagas += g(st.funil, k, "pagas");
+        aprov += g(st.funil, k, "aprovados"); conv += g(st.funil, k, "convocados");
+        matric += g(st.funil, k, "matric");
+      });
+      return { nome: p.nome, insc, pagas, aprov, conv, matric };
+    }).filter((x) => x.insc + x.pagas + x.aprov + x.conv + x.matric > 0);
+    const funilTotal = funilEtapas.reduce((a, x) => ({
+      insc: a.insc + x.insc, pagas: a.pagas + x.pagas, aprov: a.aprov + x.aprov, conv: a.conv + x.conv, matric: a.matric + x.matric,
+    }), { insc: 0, pagas: 0, aprov: 0, conv: 0, matric: 0 });
+
     return { linhas, histTotal, projTotal, metaTotal, metaHist, matrizShare, ciclosHistoricos, alvo: cfg.alvo, cenario: cfg.cenario, cicloHist,
-      projFies, projSelfPaid, histFies, histSelfPaid, convGlobalHist, vagasTot, projOcupaVaga, projNaoOcupa,
+      projSelfPaid, projFies, projTransf, projTransfFies, projRecuperado,
+      histSelfPaid, histFies, histTransf, histTransfFies, histRecuperado,
+      convGlobalHist, cacHist, cpiHist, previsaoInscritos, vagasTot, projOcupaVaga, projNaoOcupa,
+      funilEtapas, funilTotal,
       nomeUni: uniSel === "__holding__" ? "Holding (todas as unidades)" : (st.unidades.find((u) => u.id === uniSel) || {}).nome };
   }, [st, uniSel, cicloHist]);
 
@@ -175,9 +218,24 @@ export default function Executivo() {
           <div style={kpiSub}>inscrito → matriculado</div>
         </div>
         <div style={kpiCard}>
-          <div style={kpiRot}>Vaga ociosa</div>
+          <div style={kpiRot}>CAC previsto</div>
+          <div style={{ ...kpiVal, color: "#0E1F1B", fontSize: 20 }}>{isFinite(D.cacHist) && D.cacHist > 0 ? brl(D.cacHist) : "—"}</div>
+          <div style={kpiSub}>custo por matrícula</div>
+        </div>
+        <div style={kpiCard}>
+          <div style={kpiRot}>CPI previsto</div>
+          <div style={{ ...kpiVal, color: "#0E1F1B", fontSize: 20 }}>{isFinite(D.cpiHist) && D.cpiHist > 0 ? brl(D.cpiHist) : "—"}</div>
+          <div style={kpiSub}>custo por inscrição</div>
+        </div>
+        <div style={kpiCard}>
+          <div style={kpiRot}>Previsão de inscritos</div>
+          <div style={{ ...kpiVal, color: "#0E1F1B" }}>{D.previsaoInscritos > 0 ? f0(D.previsaoInscritos) : "—"}</div>
+          <div style={kpiSub}>topo de funil necessário</div>
+        </div>
+        <div style={kpiCard}>
+          <div style={kpiRot}>Vagas a preencher</div>
           <div style={{ ...kpiVal, color: (D.vagasTot - D.projOcupaVaga) > 0 ? "#8A6100" : "#4A5C57" }}>{D.vagasTot > 0 ? f0(D.vagasTot - D.projOcupaVaga) : "—"}</div>
-          <div style={kpiSub}>{D.vagasTot > 0 ? "vaga = meta · exclui transferências" : "defina vagas na aba Sistema"}</div>
+          <div style={kpiSub}>{D.vagasTot > 0 ? "vaga = meta · exclui transf. e recuperado" : "defina vagas na aba Sistema"}</div>
         </div>
       </div>
 
@@ -211,24 +269,23 @@ export default function Executivo() {
               ))}
             </tbody>
             <tfoot>
-              <tr>
-                <td style={{ ...tdLsub, color: "#0F5F4E" }}>Subtotal Self paid</td>
-                <td style={tdsub}>{f0(D.histSelfPaid)}</td>
-                <td style={tdsub}>{pct(div(D.histSelfPaid, D.histTotal))}</td>
-                <td style={tdsub}>—</td>
-                <td style={{ ...tdsub, background: "#F5F9F8" }}>{f0(D.projSelfPaid)}</td>
-                <td style={{ ...tdsub, background: "#F5F9F8" }}>{pct(div(D.projSelfPaid, D.projTotal))}</td>
-                <td style={{ ...tdsub, background: "#F5F9F8" }}>—</td>
-              </tr>
-              <tr>
-                <td style={{ ...tdLsub, color: "#8A6100" }}>Subtotal FIES</td>
-                <td style={tdsub}>{f0(D.histFies)}</td>
-                <td style={tdsub}>{pct(div(D.histFies, D.histTotal))}</td>
-                <td style={tdsub}>—</td>
-                <td style={{ ...tdsub, background: "#F5F9F8" }}>{f0(D.projFies)}</td>
-                <td style={{ ...tdsub, background: "#F5F9F8" }}>{pct(div(D.projFies, D.projTotal))}</td>
-                <td style={{ ...tdsub, background: "#F5F9F8" }}>—</td>
-              </tr>
+              {[
+                ["Subtotal Self paid", "#0F5F4E", D.histSelfPaid, D.projSelfPaid],
+                ["Subtotal FIES", "#8A6100", D.histFies, D.projFies],
+                ["Subtotal Transferência", "#6B4A8A", D.histTransf, D.projTransf],
+                ["Subtotal Transferência FIES", "#6B4A8A", D.histTransfFies, D.projTransfFies],
+                ["Subtotal Recuperado", "#2E6DA4", D.histRecuperado, D.projRecuperado],
+              ].filter(([, , h, p]) => h > 0 || p > 0).map(([rot, cor, h, p], i) => (
+                <tr key={i}>
+                  <td style={{ ...tdLsub, color: cor }}>{rot}</td>
+                  <td style={tdsub}>{f0(h)}</td>
+                  <td style={tdsub}>{pct(div(h, D.histTotal))}</td>
+                  <td style={tdsub}>—</td>
+                  <td style={{ ...tdsub, background: "#F5F9F8" }}>{f0(p)}</td>
+                  <td style={{ ...tdsub, background: "#F5F9F8" }}>{pct(div(p, D.projTotal))}</td>
+                  <td style={{ ...tdsub, background: "#F5F9F8" }}>—</td>
+                </tr>
+              ))}
               <tr>
                 <td style={tdLf}>Total</td>
                 <td style={tdf}>{f0(D.histTotal)}</td>
@@ -246,6 +303,36 @@ export default function Executivo() {
           <b style={{ marginLeft: 12 }}>% da meta</b>: quanto aquela entrada representa da meta de matrículas definida.
           {D.metaHist === 0 && <span style={{ color: "#8A6100", marginLeft: 12 }}>Sem meta cadastrada para {D.cicloHist}, o "% da meta" histórico fica vazio.</span>}
         </div>
+      </div>
+
+      {/* Visão de funil por etapa x processo */}
+      <div style={card}>
+        <div style={cardH}>Funil por etapa — {D.cicloHist} · {D.nomeUni}</div>
+        <div style={{ overflowX: "auto" }}>
+          <table style={tbl}>
+            <thead><tr>
+              <th style={{ ...th, textAlign: "left" }}>Etapa</th>
+              {D.funilEtapas.map((p, i) => <th key={i} style={th}>{p.nome}</th>)}
+              <th style={thP}>Total</th>
+            </tr></thead>
+            <tbody>
+              {[
+                ["Inscritos", "insc"],
+                ["Inscritos pagos", "pagas"],
+                ["Aprovados", "aprov"],
+                ["Convocados", "conv"],
+                ["Matriculados", "matric"],
+              ].map(([rot, campo], ri) => (
+                <tr key={ri}>
+                  <td style={tdL}>{rot}</td>
+                  {D.funilEtapas.map((p, i) => <td key={i} style={td}>{p[campo] > 0 ? f0(p[campo]) : "—"}</td>)}
+                  <td style={{ ...td, background: "#F5F9F8", fontWeight: 700 }}>{D.funilTotal[campo] > 0 ? f0(D.funilTotal[campo]) : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div style={legenda}>Etapas nas linhas, processos nas colunas. Aprovados e convocados aparecem quando preenchidos na aba Sistema. Troque o ciclo no filtro acima.</div>
       </div>
 
       {/* Matriz share por periodo */}

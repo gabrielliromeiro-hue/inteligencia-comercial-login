@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import * as E from "./lib/engine-core.js";
-import { carregarTudo, salvarFunil, salvarCanal, salvarMeta } from "./lib/dados.js";
+import { carregarTudo, salvarFunil, salvarCanal, salvarMeta, updCanal } from "./lib/dados.js";
 
 const f0 = (n) => (isFinite(n) ? Math.round(n).toLocaleString("pt-BR") : "—");
 const f1 = (n) => (isFinite(n) ? n.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : "—");
@@ -77,9 +77,9 @@ export default function Planejamento({ podeEditar }) {
     const cicloUni = (cic, u) => {
       const linhas = st.processos.map((p) => {
         const k = `${cic}|${u}|${p.id}`;
-        return { p, vagas: g(st.funil, k, "vagas"), insc: g(st.funil, k, "insc"), pagas: g(st.funil, k, "pagas"), matric: g(st.funil, k, "matric") };
+        return { p, vagas: g(st.funil, k, "vagas"), insc: g(st.funil, k, "insc"), pagas: g(st.funil, k, "pagas"), aprovados: g(st.funil, k, "aprovados"), convocados: g(st.funil, k, "convocados"), matric: g(st.funil, k, "matric") };
       });
-      const T = linhas.reduce((a, l) => ({ vagas: a.vagas + l.vagas, insc: a.insc + l.insc, pagas: a.pagas + l.pagas, matric: a.matric + l.matric, matricOcupa: a.matricOcupa + (l.p.ocupaVaga !== false ? l.matric : 0) }), { vagas: 0, insc: 0, pagas: 0, matric: 0, matricOcupa: 0 });
+      const T = linhas.reduce((a, l) => ({ vagas: a.vagas + l.vagas, insc: a.insc + l.insc, pagas: a.pagas + l.pagas, aprovados: a.aprovados + l.aprovados, convocados: a.convocados + l.convocados, matric: a.matric + l.matric, matricOcupa: a.matricOcupa + (l.p.ocupaVaga !== false ? l.matric : 0) }), { vagas: 0, insc: 0, pagas: 0, aprovados: 0, convocados: 0, matric: 0, matricOcupa: 0 });
       return { linhas, T, temDado: T.insc + T.pagas + T.matric > 0 };
     };
     const cicloCanal = (cic, u) => {
@@ -191,7 +191,7 @@ export default function Planejamento({ podeEditar }) {
         <div className="pc-card">
           <div className="pc-h">Funil por processo — {ciclo} · {uniNome(uni)}</div>
           <div className="pc-scroll"><table className="pc-t">
-            <thead><tr><th>Processo</th><th>Vagas</th><th>Inscrições</th><th>Pagas</th><th>Matrículas</th><th>Taxa pagto</th><th>Paga→Mat</th><th>Insc→Mat</th><th>Share</th><th>Vaga ociosa</th></tr></thead>
+            <thead><tr><th>Processo</th><th>Vagas</th><th>Inscrições</th><th>Pagas</th><th>Aprovados</th><th>Convocados</th><th>Matrículas</th><th>Taxa pagto</th><th>Paga→Mat</th><th>Insc→Mat</th><th>Share</th><th>Vagas a preencher</th></tr></thead>
             <tbody>
               {cu.linhas.map((l) => { const k = `${ciclo}|${uni}|${l.p.id}`; const d = st.funil[k] || {};
                 const ocupa = l.p.ocupaVaga !== false;
@@ -206,13 +206,15 @@ export default function Planejamento({ podeEditar }) {
                     : <Cell w={60} value={d.vagas} onChange={(v) => setFunilLocal(k, "vagas", v, uni, l.p.id)} />}</td>
                   <td><Cell value={d.insc} onChange={(v) => setFunilLocal(k, "insc", v, uni, l.p.id)} /></td>
                   <td><Cell value={d.pagas} onChange={(v) => setFunilLocal(k, "pagas", v, uni, l.p.id)} /></td>
+                  <td><Cell value={d.aprovados} onChange={(v) => setFunilLocal(k, "aprovados", v, uni, l.p.id)} /></td>
+                  <td><Cell value={d.convocados} onChange={(v) => setFunilLocal(k, "convocados", v, uni, l.p.id)} /></td>
                   <td><Cell value={d.matric} onChange={(v) => setFunilLocal(k, "matric", v, uni, l.p.id)} /></td>
                   <td className="m">{pct(div(l.pagas, l.insc))}</td><td className="m">{pct(div(l.matric, l.pagas))}</td>
                   <td className="m mut">{pct(div(l.matric, l.insc))}</td>
                   <td className="m"><b>{pct(div(l.matric, cu.T.matric))}</b></td>
                   <td className="m" style={{ color: ocioso > 0 ? "#8A6100" : "#4A5C57" }}>{ocupa && vagaMostrada > 0 ? f0(ocioso) : "—"}</td></tr>; })}
             </tbody>
-            <tfoot><tr><td>Total</td><td className="m">{f0(cu.T.vagas)}</td><td className="m">{f0(cu.T.insc)}</td><td className="m">{f0(cu.T.pagas)}</td><td className="m">{f0(cu.T.matric)}</td><td className="m">{pct(div(cu.T.pagas, cu.T.insc))}</td><td className="m">{pct(div(cu.T.matric, cu.T.pagas))}</td><td className="m">{pct(div(cu.T.matric, cu.T.insc))}</td><td>100%</td><td className="m">{f0(cu.T.vagas - cu.T.matricOcupa)}</td></tr></tfoot>
+            <tfoot><tr><td>Total</td><td className="m">{f0(cu.T.vagas)}</td><td className="m">{f0(cu.T.insc)}</td><td className="m">{f0(cu.T.pagas)}</td><td className="m">{f0(cu.T.aprovados)}</td><td className="m">{f0(cu.T.convocados)}</td><td className="m">{f0(cu.T.matric)}</td><td className="m">{pct(div(cu.T.pagas, cu.T.insc))}</td><td className="m">{pct(div(cu.T.matric, cu.T.pagas))}</td><td className="m">{pct(div(cu.T.matric, cu.T.insc))}</td><td>100%</td><td className="m">{f0(cu.T.vagas - cu.T.matricOcupa)}</td></tr></tfoot>
           </table></div>
         </div>
       )}
@@ -273,7 +275,15 @@ export default function Planejamento({ podeEditar }) {
                   <td className="m">{f0(x.mat)}</td><td className="m mut">{f1(x.matBase)}</td>
                   <td className="m">{x.matBase > 0 ? pct(x.cresc, 0) : "—"}</td>
                   <td className="m">{isFinite(x.cacBase) ? brl(x.cacBase) : "—"}</td>
-                  <td className="m mut">{pct(Math.pow(1 + x.infl, x.anos) - 1, 0)}</td>
+                  <td>{ro ? <span className="m mut">{pct(x.infl, 0)}</span> : <input className="pc-in" style={{ width: 56 }} inputMode="decimal"
+                    defaultValue={(x.infl * 100).toFixed(1)}
+                    title="Reajuste anual do CAC deste canal (%). Enter para salvar."
+                    onBlur={(e) => {
+                      const novo = num(e.target.value) / 100;
+                      setSt((s) => ({ ...s, cfg: { ...s.cfg, inflacao: { ...s.cfg.inflacao, [x.cn.id]: novo } } }));
+                      agendaSalvar("reaj_" + x.cn.id, () => updCanal(x.cn.id, { reajuste: novo }));
+                    }}
+                    onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }} />} <span className="mut" style={{ fontSize: 10 }}>({pct(Math.pow(1 + x.infl, x.anos) - 1, 0)} acum.)</span></td>
                   <td className="m mut">{x.fatSat > 1 ? "+" + pct(x.fatSat - 1, 0) : "—"}</td>
                   <td className="m"><b>{isFinite(x.cacProj) ? brl(x.cacProj) : "—"}</b></td>
                   <td className="m"><b>{x.inv > 0 ? brlK(x.inv) : "—"}</b></td></tr>; })}
