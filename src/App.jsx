@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import Admin from "./Admin.jsx";
 import { supabase, supabaseConfigurado } from "./lib/supabase.js";
 import Login from "./Login.jsx";
 import { meuPerfil, sair } from "./lib/dados.js";
