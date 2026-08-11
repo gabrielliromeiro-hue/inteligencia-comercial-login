@@ -1,20 +1,18 @@
 import React, { useState, useEffect } from "react";
-import Admin from "./Admin.jsx";
 import { supabase, supabaseConfigurado } from "./lib/supabase.js";
 import Login from "./Login.jsx";
+import Admin from "./Admin.jsx";
 import { meuPerfil, sair } from "./lib/dados.js";
 
 export default function App() {
   const [sessao, setSessao] = useState(null);
   const [perfil, setPerfil] = useState(null);
   const [carregando, setCarregando] = useState(true);
+  const [aba, setAba] = useState("sistema");
 
   useEffect(() => {
     if (!supabaseConfigurado) { setCarregando(false); return; }
-    supabase.auth.getSession().then(({ data }) => {
-      setSessao(data.session);
-      setCarregando(false);
-    });
+    supabase.auth.getSession().then(({ data }) => { setSessao(data.session); setCarregando(false); });
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSessao(s));
     return () => sub.subscription.unsubscribe();
   }, []);
@@ -24,50 +22,81 @@ export default function App() {
     else setPerfil(null);
   }, [sessao]);
 
-  // App não configurado (faltam as chaves) — mensagem clara
-  if (!supabaseConfigurado) {
-    return (
-      <div style={box}>
-        <div style={card}>
-          <h2 style={{ fontFamily: "Georgia,serif", color: "#9B1C1C", margin: 0 }}>Chaves não configuradas</h2>
-          <p style={{ fontSize: 13, color: "#4A5C57", lineHeight: 1.5 }}>
-            O app subiu, mas ainda não recebeu as chaves do banco. Isso é esperado neste passo.
-            Configure <b>VITE_SUPABASE_URL</b> e <b>VITE_SUPABASE_ANON_KEY</b> nas variáveis de ambiente do Netlify e republique.
-          </p>
+  if (!supabaseConfigurado) return (
+    <div style={center}><div style={card}>
+      <h2 style={{ fontFamily: "Georgia,serif", color: "#9B1C1C", margin: 0 }}>Chaves nao configuradas</h2>
+      <p style={{ fontSize: 13, color: "#4A5C57", lineHeight: 1.5 }}>
+        Configure VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY nas variaveis de ambiente do Netlify e republique.
+      </p>
+    </div></div>
+  );
+
+  if (carregando) return <div style={center}><div style={{ color: "#4A5C57" }}>Carregando...</div></div>;
+  if (!sessao) return <Login aoEntrar={() => {}} />;
+  if (!perfil) return <div style={center}><div style={{ color: "#4A5C57" }}>Carregando perfil...</div></div>;
+
+  if (!perfil.ativo) return (
+    <div style={center}><div style={card}>
+      <h2 style={{ fontFamily: "Georgia,serif", margin: 0 }}>Acesso desativado</h2>
+      <p style={{ fontSize: 13, color: "#4A5C57" }}>Seu acesso foi desativado. Fale com o administrador.</p>
+      <button style={btnGhost} onClick={() => sair()}>Sair</button>
+    </div></div>
+  );
+
+  const ehAdmin = perfil.papel === "admin";
+  const podeEditar = perfil.papel === "admin" || perfil.papel === "editor";
+  const papelLabel = { admin: "Administrador", editor: "Editor", leitor: "Leitor" }[perfil.papel];
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#F1F4F3", fontFamily: "ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif" }}>
+      <div style={topbar}>
+        <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+          <span style={{ fontFamily: "Georgia,serif", fontSize: 16, color: "#fff" }}>Inteligencia Comercial</span>
+          <nav style={{ display: "flex", gap: 4 }}>
+            <TabBtn on={aba === "sistema"} onClick={() => setAba("sistema")}>Sistema</TabBtn>
+            {ehAdmin && <TabBtn on={aba === "admin"} onClick={() => setAba("admin")}>Acessos do time</TabBtn>}
+          </nav>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 12.5, color: "#EAF0EE" }}>{perfil.nome || perfil.email}</div>
+            <div style={{ fontSize: 10.5, color: "#9DB0AB" }}>{papelLabel}</div>
+          </div>
+          <button style={btnSair} onClick={() => sair()}>Sair</button>
         </div>
       </div>
-    );
-  }
 
-  if (carregando) return <div style={box}><div style={{ color: "#4A5C57" }}>Carregando...</div></div>;
-
-  if (!sessao) return <Login aoEntrar={() => {}} />;
-
-  // Logado — tela de confirmação do pedaço 2
-  const papelLabel = { admin: "Administrador", editor: "Editor", leitor: "Leitor" }[perfil?.papel] || "—";
-  return (
-    <div style={box}>
-      <div style={card}>
-        <div style={{ fontFamily: "Georgia,serif", fontSize: 20, color: "#0E1F1B" }}>Login funcionando ✓</div>
-        <p style={{ fontSize: 13, color: "#4A5C57", marginTop: 6 }}>Você está autenticado no sistema.</p>
-        <div style={info}>
-          <div><span style={k}>Email</span><span style={v}>{perfil?.email || sessao.user.email}</span></div>
-          <div><span style={k}>Nome</span><span style={v}>{perfil?.nome || "—"}</span></div>
-          <div><span style={k}>Papel</span><span style={{ ...v, fontWeight: 700, color: "#0F5F4E" }}>{papelLabel}</span></div>
-        </div>
-        <p style={{ fontSize: 12, color: "#4A5C57", marginTop: 14, lineHeight: 1.5 }}>
-          Se o seu papel aparece como <b>Administrador</b>, você é o primeiro usuário e o dono do sistema.
-          No próximo pedaço, você vai criar os acessos do time.
-        </p>
-        <button style={btn} onClick={() => sair()}>Sair</button>
+      <div style={{ padding: "20px", maxWidth: 1500, margin: "0 auto" }}>
+        {aba === "admin" && ehAdmin && <Admin meuId={perfil.id} />}
+        {aba === "sistema" && (
+          <div style={card}>
+            <h2 style={{ fontFamily: "Georgia,serif", fontSize: 17, margin: 0, color: "#0E1F1B" }}>
+              Sistema de planejamento
+            </h2>
+            <p style={{ fontSize: 13, color: "#4A5C57", lineHeight: 1.55, marginTop: 8 }}>
+              Voce esta autenticado como <b>{papelLabel}</b> e {podeEditar ? "pode editar os dados." : "pode visualizar os dados."}
+            </p>
+            <div style={{ background: "#E4EFEB", padding: "12px 14px", borderRadius: 4, fontSize: 12.5, color: "#0F5F4E", marginTop: 12, lineHeight: 1.5 }}>
+              As telas de planejamento (funil, canais, metas, verba) entram no proximo passo, ja conectadas ao banco para todo o time preencher junto. A base (login, papeis e a area de acessos) esta pronta.
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-const box = { minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#F1F4F3", fontFamily: "ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif", padding: 20 };
-const card = { background: "#fff", border: "1px solid #D8E0DD", borderRadius: 8, padding: "28px", width: 400, maxWidth: "100%" };
-const info = { marginTop: 14, borderTop: "1px solid #EDF1F0" };
-const k = { display: "block", fontSize: 10, textTransform: "uppercase", letterSpacing: ".08em", color: "#4A5C57", fontWeight: 700, marginTop: 12 };
-const v = { display: "block", fontSize: 14, color: "#0E1F1B", marginTop: 2 };
-const btn = { marginTop: 18, background: "#fff", color: "#0E1F1B", border: "1px solid #D8E0DD", borderRadius: 4, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" };
+function TabBtn({ on, onClick, children }) {
+  return (
+    <button onClick={onClick} style={{
+      background: "transparent", border: 0, borderBottom: on ? "2px solid #4FD1A5" : "2px solid transparent",
+      color: on ? "#fff" : "#9DB0AB", padding: "6px 12px", fontSize: 12.5, cursor: "pointer", fontWeight: 500,
+    }}>{children}</button>
+  );
+}
+
+const center = { minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#F1F4F3", fontFamily: "ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif", padding: 20 };
+const card = { background: "#fff", border: "1px solid #D8E0DD", borderRadius: 8, padding: 24, width: "100%", maxWidth: 460 };
+const topbar = { background: "#0E1F1B", padding: "0 20px", height: 52, display: "flex", alignItems: "center", justifyContent: "space-between" };
+const btnSair = { background: "transparent", border: "1px solid #3A4A45", color: "#EAF0EE", borderRadius: 4, padding: "5px 12px", fontSize: 12, cursor: "pointer", fontWeight: 600 };
+const btnGhost = { marginTop: 14, background: "#fff", border: "1px solid #D8E0DD", borderRadius: 4, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" };
