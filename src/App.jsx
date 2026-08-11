@@ -3,13 +3,14 @@ import { supabase, supabaseConfigurado } from "./lib/supabase.js";
 import Login from "./Login.jsx";
 import Admin from "./Admin.jsx";
 import Planejamento from "./Planejamento.jsx";
+import Executivo from "./Executivo.jsx";
 import { meuPerfil, sair } from "./lib/dados.js";
 
 export default function App() {
   const [sessao, setSessao] = useState(null);
   const [perfil, setPerfil] = useState(null);
   const [carregando, setCarregando] = useState(true);
-  const [aba, setAba] = useState("sistema");
+  const [aba, setAba] = useState("executivo");
 
   useEffect(() => {
     if (!supabaseConfigurado) { setCarregando(false); return; }
@@ -54,6 +55,7 @@ export default function App() {
         <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
           <span style={{ fontFamily: "Georgia,serif", fontSize: 16, color: "#fff" }}>Inteligencia Comercial</span>
           <nav style={{ display: "flex", gap: 4 }}>
+            <TabBtn on={aba === "executivo"} onClick={() => setAba("executivo")}>Visão Executiva</TabBtn>
             <TabBtn on={aba === "sistema"} onClick={() => setAba("sistema")}>Sistema</TabBtn>
             {ehAdmin && <TabBtn on={aba === "admin"} onClick={() => setAba("admin")}>Acessos do time</TabBtn>}
           </nav>
@@ -69,6 +71,7 @@ export default function App() {
 
       <div style={{ padding: "20px", maxWidth: 1500, margin: "0 auto" }}>
         {aba === "admin" && ehAdmin && <Admin meuId={perfil.id} />}
+        {aba === "executivo" && <Executivo />}
         {aba === "sistema" && <Planejamento podeEditar={podeEditar} />}
       </div>
     </div>
