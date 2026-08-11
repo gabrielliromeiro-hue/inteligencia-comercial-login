@@ -59,7 +59,7 @@ export async function carregarTudo() {
   // reidrata para o formato do app
   const funilMap = {}, canalMap = {}, metaMap = {};
   (funil.data || []).forEach((r) => {
-    funilMap[`${r.ciclo}|${r.unidade_id}|${r.processo_id}`] = { vagas: r.vagas, insc: r.inscricoes, pagas: r.insc_pagas, matric: r.matriculas };
+    funilMap[`${r.ciclo}|${r.unidade_id}|${r.processo_id}`] = { vagas: r.vagas, insc: r.inscricoes, pagas: r.insc_pagas, aprovados: r.aprovados, convocados: r.convocados, matric: r.matriculas };
   });
   (canal.data || []).forEach((r) => {
     canalMap[`${r.ciclo}|${r.unidade_id}|${r.canal_id}`] = { inv: r.investimento, leads: r.leads, pagas: r.insc_pagas, matric: r.matriculas };
@@ -92,7 +92,7 @@ export async function carregarTudo() {
 // ---------- SALVAR (upserts pontuais) ----------
 export async function salvarFunil(ciclo, uniId, procId, campos) {
   const row = { ciclo, unidade_id: uniId, processo_id: procId,
-    vagas: n(campos.vagas), inscricoes: n(campos.insc), insc_pagas: n(campos.pagas), matriculas: n(campos.matric),
+    vagas: n(campos.vagas), inscricoes: n(campos.insc), insc_pagas: n(campos.pagas), aprovados: n(campos.aprovados), convocados: n(campos.convocados), matriculas: n(campos.matric),
     atualizado_em: new Date().toISOString() };
   const { error } = await supabase.from("funil_hist").upsert(row, { onConflict: "unidade_id,processo_id,ciclo" });
   if (error) throw error;
