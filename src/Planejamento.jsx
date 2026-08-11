@@ -138,6 +138,17 @@ export default function Planejamento({ podeEditar }) {
   const cc = engine.cicloCanal(ciclo, uni);
   const ro = !podeEditar;
 
+  // Vaga automatica nos ciclos .2: vagas do .1 - matriculas do .1 (o que sobrou do 1o semestre)
+  const ehSegundoSem = ciclo.endsWith(".2");
+  const cicloPar = ciclo.replace(".2", ".1");
+  const vagaAuto = (procId) => {
+    if (!ehSegundoSem) return null;
+    const k1 = `${cicloPar}|${uni}|${procId}`;
+    const d1 = st.funil[k1] || {};
+    const v = num(d1.vagas) - num(d1.matric);
+    return { valor: Math.max(0, v), origem: `${cicloPar}: ${f0(num(d1.vagas))} vagas − ${f0(num(d1.matric))} matríc.` };
+  };
+
   const Cell = ({ value, onChange, w, ph }) => (
     <input className="pc-in" style={{ width: w || 82, ...(ro ? { background: "transparent", cursor: "default" } : {}) }}
       value={value ?? ""} placeholder={ph} readOnly={ro} inputMode="decimal"
@@ -180,18 +191,25 @@ export default function Planejamento({ podeEditar }) {
         <div className="pc-card">
           <div className="pc-h">Funil por processo — {ciclo} · {uniNome(uni)}</div>
           <div className="pc-scroll"><table className="pc-t">
-            <thead><tr><th>Processo</th><th>Vagas</th><th>Inscrições</th><th>Pagas</th><th>Matrículas</th><th>Taxa pagto</th><th>Paga→Mat</th><th>Share</th></tr></thead>
+            <thead><tr><th>Processo</th><th>Vagas</th><th>Inscrições</th><th>Pagas</th><th>Matrículas</th><th>Taxa pagto</th><th>Paga→Mat</th><th>Insc→Mat</th><th>Share</th><th>Vaga ociosa</th></tr></thead>
             <tbody>
               {cu.linhas.map((l) => { const k = `${ciclo}|${uni}|${l.p.id}`; const d = st.funil[k] || {};
-                return <tr key={l.p.id}><td>{l.p.nome}</td>
-                  <td><Cell w={60} value={d.vagas} onChange={(v) => setFunilLocal(k, "vagas", v, uni, l.p.id)} /></td>
+                const va = vagaAuto(l.p.id);
+                const vagaMostrada = va ? va.valor : num(d.vagas);
+                const ocioso = vagaMostrada - num(l.matric);
+                return <tr key={l.p.id}><td>{l.p.nome}{/FIES/i.test(l.p.nome) && <span className="pc-tag">FIES</span>}</td>
+                  <td>{va
+                    ? <span className="m" title={va.origem} style={{ color: "#0F5F4E", cursor: "help", borderBottom: "1px dotted #0F5F4E" }}>{f0(va.valor)}</span>
+                    : <Cell w={60} value={d.vagas} onChange={(v) => setFunilLocal(k, "vagas", v, uni, l.p.id)} />}</td>
                   <td><Cell value={d.insc} onChange={(v) => setFunilLocal(k, "insc", v, uni, l.p.id)} /></td>
                   <td><Cell value={d.pagas} onChange={(v) => setFunilLocal(k, "pagas", v, uni, l.p.id)} /></td>
                   <td><Cell value={d.matric} onChange={(v) => setFunilLocal(k, "matric", v, uni, l.p.id)} /></td>
                   <td className="m">{pct(div(l.pagas, l.insc))}</td><td className="m">{pct(div(l.matric, l.pagas))}</td>
-                  <td className="m"><b>{pct(div(l.matric, cu.T.matric))}</b></td></tr>; })}
+                  <td className="m mut">{pct(div(l.matric, l.insc))}</td>
+                  <td className="m"><b>{pct(div(l.matric, cu.T.matric))}</b></td>
+                  <td className="m" style={{ color: ocioso > 0 ? "#8A6100" : "#4A5C57" }}>{vagaMostrada > 0 ? f0(ocioso) : "—"}</td></tr>; })}
             </tbody>
-            <tfoot><tr><td>Total</td><td className="m">{f0(cu.T.vagas)}</td><td className="m">{f0(cu.T.insc)}</td><td className="m">{f0(cu.T.pagas)}</td><td className="m">{f0(cu.T.matric)}</td><td className="m">{pct(div(cu.T.pagas, cu.T.insc))}</td><td className="m">{pct(div(cu.T.matric, cu.T.pagas))}</td><td>100%</td></tr></tfoot>
+            <tfoot><tr><td>Total</td><td className="m">{f0(cu.T.vagas)}</td><td className="m">{f0(cu.T.insc)}</td><td className="m">{f0(cu.T.pagas)}</td><td className="m">{f0(cu.T.matric)}</td><td className="m">{pct(div(cu.T.pagas, cu.T.insc))}</td><td className="m">{pct(div(cu.T.matric, cu.T.pagas))}</td><td className="m">{pct(div(cu.T.matric, cu.T.insc))}</td><td>100%</td><td className="m">{f0(cu.T.vagas - cu.T.matric)}</td></tr></tfoot>
           </table></div>
         </div>
       )}
