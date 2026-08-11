@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { supabase, supabaseConfigurado } from "./lib/supabase.js";
 import Login from "./Login.jsx";
 import Admin from "./Admin.jsx";
+import Planejamento from "./Planejamento.jsx";
 import { meuPerfil, sair } from "./lib/dados.js";
 
 export default function App() {
@@ -68,19 +69,7 @@ export default function App() {
 
       <div style={{ padding: "20px", maxWidth: 1500, margin: "0 auto" }}>
         {aba === "admin" && ehAdmin && <Admin meuId={perfil.id} />}
-        {aba === "sistema" && (
-          <div style={card}>
-            <h2 style={{ fontFamily: "Georgia,serif", fontSize: 17, margin: 0, color: "#0E1F1B" }}>
-              Sistema de planejamento
-            </h2>
-            <p style={{ fontSize: 13, color: "#4A5C57", lineHeight: 1.55, marginTop: 8 }}>
-              Voce esta autenticado como <b>{papelLabel}</b> e {podeEditar ? "pode editar os dados." : "pode visualizar os dados."}
-            </p>
-            <div style={{ background: "#E4EFEB", padding: "12px 14px", borderRadius: 4, fontSize: 12.5, color: "#0F5F4E", marginTop: 12, lineHeight: 1.5 }}>
-              As telas de planejamento (funil, canais, metas, verba) entram no proximo passo, ja conectadas ao banco para todo o time preencher junto. A base (login, papeis e a area de acessos) esta pronta.
-            </div>
-          </div>
-        )}
+        {aba === "sistema" && <Planejamento podeEditar={podeEditar} />}
       </div>
     </div>
   );
