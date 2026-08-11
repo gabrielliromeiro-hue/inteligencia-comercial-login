@@ -75,7 +75,7 @@ export async function carregarTudo() {
   const c = cfg.data || {};
   return {
     unidades: (uni.data || []).map((u) => ({ id: u.id, nome: u.nome, mensalidade: Number(u.mensalidade) })),
-    processos: (proc.data || []).map((p) => ({ id: p.id, nome: p.nome })),
+    processos: (proc.data || []).map((p) => ({ id: p.id, nome: p.nome, ocupaVaga: p.ocupa_vaga !== false })),
     canais: (can.data || []).map((x) => ({ id: x.id, nome: x.nome, pago: x.pago, beta: Number(x.beta) })),
     ciclos: c.ciclos || ["2024.1", "2024.2", "2025.1", "2025.2", "2026.1", "2026.2"],
     alvos: c.alvos || ["2027.1", "2027.2", "2028.1"],
