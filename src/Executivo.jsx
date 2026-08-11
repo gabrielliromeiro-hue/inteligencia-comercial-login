@@ -63,6 +63,22 @@ export default function Executivo() {
     alvoUnis.forEach((u) => { const pj = projUniProc(u); metaTotal += pj.metaMatric; st.processos.forEach((p) => (projAgg[p.id] += pj.out[p.id])); });
     const projTotal = st.processos.reduce((a, p) => a + projAgg[p.id], 0);
 
+
+    // matriz share por processo x ciclo historico + previsto
+    const ciclosHistoricos = st.ciclos.filter((c) => c < cfg.alvo).sort();
+    const matrizShare = st.processos.map((p, idx) => {
+      const porCiclo = ciclosHistoricos.map((cic) => {
+        let mat = 0, tot = 0;
+        alvoUnis.forEach((u) => {
+          st.processos.forEach((pp) => { tot += g(st.funil, `${cic}|${u}|${pp.id}`, "matric"); });
+          mat += g(st.funil, `${cic}|${u}|${p.id}`, "matric");
+        });
+        return tot > 0 ? mat / tot : NaN;
+      });
+      const prevShare = projTotal > 0 ? projAgg[p.id] / projTotal : NaN;
+      return { nome: p.nome, cor: PALETA[idx % PALETA.length], porCiclo, prevShare };
+    }).filter((r) => r.porCiclo.some((x) => isFinite(x)) || isFinite(r.prevShare));
+
     const linhas = st.processos.map((p, i) => ({
       nome: p.nome, cor: PALETA[i % PALETA.length],
       histMat: histProc.find((x) => x.p.id === p.id).mat,
@@ -75,7 +91,7 @@ export default function Executivo() {
     let metaHist = 0;
     alvoUnis.forEach((u) => { metaHist += num((st.meta[`${cicloHist}|${u}`] || {}).matric); });
 
-    return { linhas, histTotal, projTotal, metaTotal, metaHist, alvo: cfg.alvo, cenario: cfg.cenario, cicloHist,
+    return { linhas, histTotal, projTotal, metaTotal, metaHist, matrizShare, ciclosHistoricos, alvo: cfg.alvo, cenario: cfg.cenario, cicloHist,
       nomeUni: uniSel === "__holding__" ? "Holding (todas as unidades)" : (st.unidades.find((u) => u.id === uniSel) || {}).nome };
   }, [st, uniSel, cicloHist]);
 
@@ -157,6 +173,30 @@ export default function Executivo() {
           <b style={{ marginLeft: 12 }}>% da meta</b>: quanto aquela entrada representa da meta de matrículas definida.
           {D.metaHist === 0 && <span style={{ color: "#8A6100", marginLeft: 12 }}>Sem meta cadastrada para {D.cicloHist}, o "% da meta" histórico fica vazio.</span>}
         </div>
+      </div>
+
+      {/* Matriz share por periodo */}
+      <div style={card}>
+        <div style={cardH}>Evolução do share por processo — todos os ciclos + previsão {D.alvo}</div>
+        <div style={{ overflowX: "auto" }}>
+          <table style={tbl}>
+            <thead><tr>
+              <th style={{ ...th, textAlign: "left" }}>Processo</th>
+              {D.ciclosHistoricos.map((c) => <th key={c} style={th}>{c}</th>)}
+              <th style={thP}>Prev. {D.alvo}</th>
+            </tr></thead>
+            <tbody>
+              {D.matrizShare.map((r, i) => (
+                <tr key={i}>
+                  <td style={tdL}><span style={{ ...dot, background: r.cor }} />{r.nome}</td>
+                  {r.porCiclo.map((v, j) => <td key={j} style={td}>{isFinite(v) ? pct(v) : "—"}</td>)}
+                  <td style={{ ...td, background: "#F5F9F8", fontWeight: 700 }}>{isFinite(r.prevShare) ? pct(r.prevShare) : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div style={legenda}>Cada célula é a participação do processo no total de matrículas daquele ciclo. A última coluna é a projeção do modelo para {D.alvo}, calculada a partir do histórico.</div>
       </div>
 
       {/* Barras comparativas hist vs prev */}
