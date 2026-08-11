@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import * as E from "./lib/engine-core.js";
-import { carregarTudo, salvarFunil, salvarCanal, salvarMeta, updCanal } from "./lib/dados.js";
+import { carregarTudo, salvarFunil, salvarCanal, salvarMeta, updCanal, salvarVagaCiclo } from "./lib/dados.js";
 
 const f0 = (n) => (isFinite(n) ? Math.round(n).toLocaleString("pt-BR") : "—");
 const f1 = (n) => (isFinite(n) ? n.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : "—");
@@ -138,15 +138,20 @@ export default function Planejamento({ podeEditar }) {
   const cc = engine.cicloCanal(ciclo, uni);
   const ro = !podeEditar;
 
-  // Vaga automatica nos ciclos .2: vagas do .1 - matriculas do .1 (o que sobrou do 1o semestre)
+  // Vaga do CICLO (única, não por processo)
   const ehSegundoSem = ciclo.endsWith(".2");
   const cicloPar = ciclo.replace(".2", ".1");
-  const vagaAuto = (procId) => {
-    if (!ehSegundoSem) return null;
-    const k1 = `${cicloPar}|${uni}|${procId}`;
-    const d1 = st.funil[k1] || {};
-    const v = num(d1.vagas) - num(d1.matric);
-    return { valor: Math.max(0, v), origem: `${cicloPar}: ${f0(num(d1.vagas))} vagas − ${f0(num(d1.matric))} matríc.` };
+  const vagaCicloManual = (st.vagasCiclo || {})[`${ciclo}|${uni}`];
+  // no .2, a vaga é calculada: vaga do .1 - matriculas que ocupam vaga do .1
+  const cu1 = ehSegundoSem ? engine.cicloUni(cicloPar, uni) : null;
+  const vaga1 = ehSegundoSem ? num((st.vagasCiclo || {})[`${cicloPar}|${uni}`]) : 0;
+  const vagaCicloAuto = ehSegundoSem ? Math.max(0, vaga1 - (cu1 ? cu1.T.matricOcupa : 0)) : null;
+  const vagaCiclo = ehSegundoSem ? vagaCicloAuto : num(vagaCicloManual);
+  const ociosaCiclo = vagaCiclo - cu.T.matricOcupa;
+
+  const setVagaCiclo = (v) => {
+    setSt((s) => ({ ...s, vagasCiclo: { ...(s.vagasCiclo || {}), [`${ciclo}|${uni}`]: v } }));
+    agendaSalvar("vagaciclo", () => salvarVagaCiclo(ciclo, uni, v));
   };
 
   const Cell = ({ value, onChange, w, ph }) => (
@@ -190,20 +195,22 @@ export default function Planejamento({ podeEditar }) {
       {tab === "base" && (
         <div className="pc-card">
           <div className="pc-h">Funil por processo — {ciclo} · {uniNome(uni)}</div>
+          <div style={{ display: "flex", gap: 20, alignItems: "center", padding: "10px 14px", borderBottom: "1px solid #EDF1F0", flexWrap: "wrap", background: "#FAFBFB" }}>
+            <div className="pc-fld"><span className="pc-lbl">Vagas do ciclo</span>
+              {ehSegundoSem
+                ? <span className="m" title={`${cicloPar}: ${f0(vaga1)} vagas − ${f0(cu1 ? cu1.T.matricOcupa : 0)} matríc. que ocupam vaga`} style={{ color: "#0F5F4E", cursor: "help", borderBottom: "1px dotted #0F5F4E", fontSize: 15, fontWeight: 700 }}>{f0(vagaCiclo)}</span>
+                : <Cell w={70} value={vagaCicloManual} onChange={setVagaCiclo} />}
+            </div>
+            <div className="pc-fld"><span className="pc-lbl">Matrículas que ocupam vaga</span><span className="m" style={{ fontWeight: 700 }}>{f0(cu.T.matricOcupa)}</span></div>
+            <div className="pc-fld"><span className="pc-lbl">Vagas a preencher</span><span className="m" style={{ fontWeight: 700, color: ociosaCiclo > 0 ? "#8A6100" : "#0F5F4E" }}>{vagaCiclo > 0 ? f0(ociosaCiclo) : "—"}</span></div>
+            {ehSegundoSem && <span className="pc-tag" style={{ background: "#E4EFEB", color: "#0F5F4E" }}>vaga do .2 calculada do .1</span>}
+          </div>
           <div className="pc-scroll"><table className="pc-t">
-            <thead><tr><th>Processo</th><th>Vagas</th><th>Inscrições</th><th>Pagas</th><th>Aprovados</th><th>Convocados</th><th>Matrículas</th><th>Taxa pagto</th><th>Paga→Mat</th><th>Insc→Mat</th><th>Share</th><th>Vagas a preencher</th></tr></thead>
+            <thead><tr><th>Processo</th><th>Inscrições</th><th>Pagas</th><th>Aprovados</th><th>Convocados</th><th>Matrículas</th><th>Taxa pagto</th><th>Paga→Mat</th><th>Insc→Mat</th><th>Share</th></tr></thead>
             <tbody>
               {cu.linhas.map((l) => { const k = `${ciclo}|${uni}|${l.p.id}`; const d = st.funil[k] || {};
                 const ocupa = l.p.ocupaVaga !== false;
-                const va = ocupa ? vagaAuto(l.p.id) : null;
-                const vagaMostrada = ocupa ? (va ? va.valor : num(d.vagas)) : 0;
-                const ocioso = vagaMostrada - num(l.matric);
                 return <tr key={l.p.id}><td>{l.p.nome}{/FIES/i.test(l.p.nome) && <span className="pc-tag">FIES</span>}{!ocupa && <span className="pc-tag" style={{ background: "#F0EAF5", color: "#6B4A8A" }}>não ocupa vaga</span>}</td>
-                  <td>{!ocupa
-                    ? <span className="m mut">—</span>
-                    : va
-                    ? <span className="m" title={va.origem} style={{ color: "#0F5F4E", cursor: "help", borderBottom: "1px dotted #0F5F4E" }}>{f0(va.valor)}</span>
-                    : <Cell w={60} value={d.vagas} onChange={(v) => setFunilLocal(k, "vagas", v, uni, l.p.id)} />}</td>
                   <td><Cell value={d.insc} onChange={(v) => setFunilLocal(k, "insc", v, uni, l.p.id)} /></td>
                   <td><Cell value={d.pagas} onChange={(v) => setFunilLocal(k, "pagas", v, uni, l.p.id)} /></td>
                   <td><Cell value={d.aprovados} onChange={(v) => setFunilLocal(k, "aprovados", v, uni, l.p.id)} /></td>
@@ -211,10 +218,9 @@ export default function Planejamento({ podeEditar }) {
                   <td><Cell value={d.matric} onChange={(v) => setFunilLocal(k, "matric", v, uni, l.p.id)} /></td>
                   <td className="m">{pct(div(l.pagas, l.insc))}</td><td className="m">{pct(div(l.matric, l.pagas))}</td>
                   <td className="m mut">{pct(div(l.matric, l.insc))}</td>
-                  <td className="m"><b>{pct(div(l.matric, cu.T.matric))}</b></td>
-                  <td className="m" style={{ color: ocioso > 0 ? "#8A6100" : "#4A5C57" }}>{ocupa && vagaMostrada > 0 ? f0(ocioso) : "—"}</td></tr>; })}
+                  <td className="m"><b>{pct(div(l.matric, cu.T.matric))}</b></td></tr>; })}
             </tbody>
-            <tfoot><tr><td>Total</td><td className="m">{f0(cu.T.vagas)}</td><td className="m">{f0(cu.T.insc)}</td><td className="m">{f0(cu.T.pagas)}</td><td className="m">{f0(cu.T.aprovados)}</td><td className="m">{f0(cu.T.convocados)}</td><td className="m">{f0(cu.T.matric)}</td><td className="m">{pct(div(cu.T.pagas, cu.T.insc))}</td><td className="m">{pct(div(cu.T.matric, cu.T.pagas))}</td><td className="m">{pct(div(cu.T.matric, cu.T.insc))}</td><td>100%</td><td className="m">{f0(cu.T.vagas - cu.T.matricOcupa)}</td></tr></tfoot>
+            <tfoot><tr><td>Total</td><td className="m">{f0(cu.T.insc)}</td><td className="m">{f0(cu.T.pagas)}</td><td className="m">{f0(cu.T.aprovados)}</td><td className="m">{f0(cu.T.convocados)}</td><td className="m">{f0(cu.T.matric)}</td><td className="m">{pct(div(cu.T.pagas, cu.T.insc))}</td><td className="m">{pct(div(cu.T.matric, cu.T.pagas))}</td><td className="m">{pct(div(cu.T.matric, cu.T.insc))}</td><td>100%</td></tr></tfoot>
           </table></div>
         </div>
       )}
