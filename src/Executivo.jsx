@@ -91,7 +91,28 @@ export default function Executivo() {
     let metaHist = 0;
     alvoUnis.forEach((u) => { metaHist += num((st.meta[`${cicloHist}|${u}`] || {}).matric); });
 
+    // FIES separado do self paid (previsto)
+    const ehFies = (nome) => /fies/i.test(nome || "");
+    const projFies = st.processos.filter((p) => ehFies(p.nome)).reduce((a, p) => a + projAgg[p.id], 0);
+    const projSelfPaid = projTotal - projFies;
+    // FIES separado (histórico do ciclo escolhido)
+    const histFies = histProc.filter((x) => ehFies(x.p.nome)).reduce((a, x) => a + x.mat, 0);
+    const histSelfPaid = histTotal - histFies;
+
+    // conversão global inscrito->matriculado (histórico do ciclo escolhido)
+    let inscHist = 0, matHistG = 0;
+    alvoUnis.forEach((u) => st.processos.forEach((p) => {
+      inscHist += g(st.funil, `${cicloHist}|${u}|${p.id}`, "insc");
+      matHistG += g(st.funil, `${cicloHist}|${u}|${p.id}`, "matric");
+    }));
+    const convGlobalHist = div(matHistG, inscHist);
+
+    // vagas (= meta) e ociosidade da holding/unidade
+    let vagasTot = 0;
+    alvoUnis.forEach((u) => { vagasTot += num((st.meta[`${cfg.alvo}|${u}`] || {}).vagas); });
+
     return { linhas, histTotal, projTotal, metaTotal, metaHist, matrizShare, ciclosHistoricos, alvo: cfg.alvo, cenario: cfg.cenario, cicloHist,
+      projFies, projSelfPaid, histFies, histSelfPaid, convGlobalHist, vagasTot,
       nomeUni: uniSel === "__holding__" ? "Holding (todas as unidades)" : (st.unidades.find((u) => u.id === uniSel) || {}).nome };
   }, [st, uniSel, cicloHist]);
 
@@ -126,6 +147,35 @@ export default function Executivo() {
         <div style={{ marginLeft: "auto", fontSize: 12, color: "#4A5C57" }}>{D.nomeUni}</div>
       </div>
 
+      {/* KPIs de topo: composição self paid x FIES + conversão global */}
+      <div style={kpiGrid}>
+        <div style={kpiCard}>
+          <div style={kpiRot}>Meta total {D.alvo}</div>
+          <div style={{ ...kpiVal, color: "#0E1F1B" }}>{f0(D.projTotal)}</div>
+          <div style={kpiSub}>calouros previstos</div>
+        </div>
+        <div style={kpiCard}>
+          <div style={kpiRot}>Self paid</div>
+          <div style={{ ...kpiVal, color: "#0F5F4E" }}>{f0(D.projSelfPaid)}</div>
+          <div style={kpiSub}>{pct(div(D.projSelfPaid, D.projTotal))} da meta · sem FIES</div>
+        </div>
+        <div style={kpiCard}>
+          <div style={kpiRot}>FIES</div>
+          <div style={{ ...kpiVal, color: "#8A6100" }}>{f0(D.projFies)}</div>
+          <div style={kpiSub}>{pct(div(D.projFies, D.projTotal))} da meta · calouro à parte</div>
+        </div>
+        <div style={kpiCard}>
+          <div style={kpiRot}>Conversão global {D.cicloHist}</div>
+          <div style={{ ...kpiVal, color: "#0E1F1B" }}>{pct(D.convGlobalHist, 1)}</div>
+          <div style={kpiSub}>inscrito → matriculado</div>
+        </div>
+        <div style={kpiCard}>
+          <div style={kpiRot}>Vaga ociosa</div>
+          <div style={{ ...kpiVal, color: (D.vagasTot - D.projTotal) > 0 ? "#8A6100" : "#4A5C57" }}>{D.vagasTot > 0 ? f0(D.vagasTot - D.projTotal) : "—"}</div>
+          <div style={kpiSub}>{D.vagasTot > 0 ? "vaga = meta · " + f0(D.vagasTot) + " vagas" : "defina vagas na aba Sistema"}</div>
+        </div>
+      </div>
+
       {/* Tabela principal */}
       <div style={card}>
         <div style={cardH}>Matrículas por processo de entrada — {D.cicloHist} (real) vs {D.alvo} (previsto)</div>
@@ -156,6 +206,24 @@ export default function Executivo() {
               ))}
             </tbody>
             <tfoot>
+              <tr>
+                <td style={{ ...tdLsub, color: "#0F5F4E" }}>Subtotal Self paid</td>
+                <td style={tdsub}>{f0(D.histSelfPaid)}</td>
+                <td style={tdsub}>{pct(div(D.histSelfPaid, D.histTotal))}</td>
+                <td style={tdsub}>—</td>
+                <td style={{ ...tdsub, background: "#F5F9F8" }}>{f0(D.projSelfPaid)}</td>
+                <td style={{ ...tdsub, background: "#F5F9F8" }}>{pct(div(D.projSelfPaid, D.projTotal))}</td>
+                <td style={{ ...tdsub, background: "#F5F9F8" }}>—</td>
+              </tr>
+              <tr>
+                <td style={{ ...tdLsub, color: "#8A6100" }}>Subtotal FIES</td>
+                <td style={tdsub}>{f0(D.histFies)}</td>
+                <td style={tdsub}>{pct(div(D.histFies, D.histTotal))}</td>
+                <td style={tdsub}>—</td>
+                <td style={{ ...tdsub, background: "#F5F9F8" }}>{f0(D.projFies)}</td>
+                <td style={{ ...tdsub, background: "#F5F9F8" }}>{pct(div(D.projFies, D.projTotal))}</td>
+                <td style={{ ...tdsub, background: "#F5F9F8" }}>—</td>
+              </tr>
               <tr>
                 <td style={tdLf}>Total</td>
                 <td style={tdf}>{f0(D.histTotal)}</td>
@@ -257,3 +325,10 @@ const cmpTrack = { flex: 1, background: "#EDF1F0", borderRadius: 3, height: 18 }
 const cmpFill = { height: "100%", borderRadius: 3, opacity: 0.9 };
 const cmpVal = { width: 52, textAlign: "right", fontSize: 11.5, fontWeight: 700, color: "#0E1F1B", fontFamily: "ui-monospace,Menlo,monospace" };
 const rodape = { fontSize: 11, color: "#8496910", lineHeight: 1.5 };
+const kpiGrid = { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 12, marginBottom: 16 };
+const kpiCard = { background: "#fff", border: "1px solid #D8E0DD", borderRadius: 8, padding: "14px 16px" };
+const kpiRot = { fontSize: 10, textTransform: "uppercase", letterSpacing: ".07em", color: "#4A5C57", fontWeight: 700 };
+const kpiVal = { fontFamily: "ui-monospace,Menlo,monospace", fontSize: 24, fontWeight: 700, marginTop: 5, fontVariantNumeric: "tabular-nums" };
+const kpiSub = { fontSize: 11, color: "#4A5C57", marginTop: 3 };
+const tdsub = { ...td, background: "#FCFCFB", fontWeight: 600, borderBottom: "1px solid #EDF1F0", fontSize: 11.5 };
+const tdLsub = { ...tdL, background: "#FCFCFB", fontWeight: 700, fontSize: 11.5 };
