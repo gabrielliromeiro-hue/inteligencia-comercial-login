@@ -117,7 +117,7 @@ export default function Planejamento({ podeEditar }) {
       const proc = st.processos.map((p) => {
         const share = shP.shares[p.id] || 0; const mat = metaMatric * share;
         const fr = E.funnelReverse(mat, rf.conv[p.id], rf.taxaPag[p.id], ganho);
-        return { p, share, shareRef: rf.share[p.id], mat, conv: fr.convEf, taxaPag: rf.taxaPag[p.id], pagas: fr.pagas, insc: fr.insc };
+        return { p, share, shareRef: rf.share[p.id], shareTrend: rf.shareTrend[p.id], mat, conv: fr.convEf, taxaPag: rf.taxaPag[p.id], pagas: fr.pagas, insc: fr.insc };
       });
       const Tproc = proc.reduce((a, x) => ({ mat: a.mat + x.mat, pagas: a.pagas + (isFinite(x.pagas) ? x.pagas : 0), insc: a.insc + (isFinite(x.insc) ? x.insc : 0) }), { mat: 0, pagas: 0, insc: 0 });
       const can = st.canais.map((cn) => {
@@ -286,16 +286,25 @@ export default function Planejamento({ podeEditar }) {
             <div className="pc-fld"><span className="pc-lbl">Meta do cenário</span><span className="m" style={{ fontSize: 16, fontWeight: 700 }}>{f0(up.metaMatric)}</span></div>
           </div>
           <div className="pc-scroll"><table className="pc-t">
-            <thead><tr><th>Processo</th><th>Share ref.</th><th>Share (%)</th><th>Efetivo</th><th>Meta matríc.</th><th>Conv paga→mat</th><th>Inscr. pagas</th><th>Inscrições</th></tr></thead>
+            <thead><tr><th>Processo</th><th>Share média</th><th>Share tendência</th><th>Share usado (%)</th><th>Efetivo</th><th>Meta matríc.</th><th>Conv paga→mat</th><th>Inscr. pagas</th><th>Inscrições</th></tr></thead>
             <tbody>
               {up.proc.map((x) => { const k = `${st.cfg.alvo}|${uni}`;
-                return <tr key={x.p.id}><td>{x.p.nome}</td><td className="m mut">{pct(x.shareRef)}</td>
+                const diverge = isFinite(x.shareTrend) && Math.abs(x.shareTrend - x.shareRef) > 0.03;
+                return <tr key={x.p.id}><td>{x.p.nome}</td>
+                  <td className="m mut">{pct(x.shareRef)}</td>
+                  <td className="m" style={{ color: diverge ? (x.shareTrend > x.shareRef ? "#0F5F4E" : "#9B1C1C") : "#4A5C57" }}>
+                    {isFinite(x.shareTrend) ? pct(x.shareTrend) : "—"}
+                    {diverge && !ro && <button title="Usar a tendência como share" onClick={() => setMetaLocal(k, `sh_${x.p.id}`, (x.shareTrend * 100).toFixed(1), uni)} style={{ marginLeft: 6, fontSize: 9, padding: "1px 5px", border: "1px solid #D8E0DD", borderRadius: 3, background: "#fff", cursor: "pointer", color: "#0F5F4E" }}>usar</button>}
+                  </td>
                   <td><Cell w={60} ph={(x.shareRef * 100).toFixed(1)} value={(st.meta[k] || {})[`sh_${x.p.id}`]} onChange={(v) => setMetaLocal(k, `sh_${x.p.id}`, v, uni)} /></td>
                   <td className="m">{pct(x.share)}</td><td className="m"><b>{f0(x.mat)}</b></td><td className="m">{pct(x.conv)}</td>
                   <td className="m">{isFinite(x.pagas) ? f0(x.pagas) : "—"}</td><td className="m"><b>{isFinite(x.insc) ? f0(x.insc) : "—"}</b></td></tr>; })}
             </tbody>
-            <tfoot><tr><td>Total</td><td colSpan={2}></td><td className="m">{pct(up.sharesProcSum, 0)}</td><td className="m">{f0(up.Tproc.mat)}</td><td></td><td className="m">{f0(up.Tproc.pagas)}</td><td className="m">{f0(up.Tproc.insc)}</td></tr></tfoot>
+            <tfoot><tr><td>Total</td><td colSpan={3}></td><td className="m">{pct(up.sharesProcSum, 0)}</td><td className="m">{f0(up.Tproc.mat)}</td><td></td><td className="m">{f0(up.Tproc.pagas)}</td><td className="m">{f0(up.Tproc.insc)}</td></tr></tfoot>
           </table></div>
+          <div style={{ fontSize: 11, color: "#4A5C57", padding: "10px 14px", lineHeight: 1.5 }}>
+            <b>Share média</b>: média ponderada dos ciclos homólogos (suaviza tendência). <b>Share tendência</b>: projeta a direção da série (captura queda/alta), com freio de ±50% para não extrapolar. Verde = subindo, vermelho = caindo. Clique "usar" para adotar a tendência, ou digite seu próprio share.
+          </div>
         </div>
       )}
 
