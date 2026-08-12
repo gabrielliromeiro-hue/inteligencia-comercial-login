@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import * as E from "./lib/engine-core.js";
-import { carregarTudo, salvarFunil, salvarCanal, salvarMeta, updCanal, salvarVagaCiclo } from "./lib/dados.js";
+import { carregarTudo, salvarFunil, salvarCanal, salvarMeta, updCanal, salvarVagaCiclo, salvarCanalProcesso } from "./lib/dados.js";
 
 const f0 = (n) => (isFinite(n) ? Math.round(n).toLocaleString("pt-BR") : "—");
 const f1 = (n) => (isFinite(n) ? n.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : "—");
@@ -16,6 +16,7 @@ export default function Planejamento({ podeEditar }) {
   const [tab, setTab] = useState("base");
   const [uni, setUni] = useState("");
   const [ciclo, setCiclo] = useState("2026.1");
+  const [procGrade, setProcGrade] = useState("");
   const [status, setStatus] = useState("Carregando...");
   const salvando = useRef({});
 
@@ -52,6 +53,13 @@ export default function Planejamento({ podeEditar }) {
     agendaSalvar(k, () => {
       const cur = { ...(stRef.current.canal[k] || {}), [campo]: v };
       return salvarCanal(ciclo, uniId, canId, cur);
+    });
+  };
+  const setCanalProcLocal = (k, campo, v, uniId, canId, procId) => {
+    setSt((s) => ({ ...s, canalProc: { ...s.canalProc, [k]: { ...(s.canalProc[k] || {}), [campo]: v } } }));
+    agendaSalvar(k, () => {
+      const cur = { ...(stRef.current.canalProc[k] || {}), [campo]: v };
+      return salvarCanalProcesso(ciclo, uniId, canId, procId, cur);
     });
   };
   const setMetaLocal = (k, campo, v, uniId) => {
@@ -225,25 +233,48 @@ export default function Planejamento({ podeEditar }) {
         </div>
       )}
 
-      {tab === "canais" && (
+      {tab === "canais" && (() => {
+        const procSel = procGrade || (st.processos[0] && st.processos[0].id);
+        const procNome = (st.processos.find((p) => p.id === procSel) || {}).nome || "";
+        // linhas: canais, para o processo selecionado
+        const linhas = st.canais.map((c) => {
+          const k = `${ciclo}|${uni}|${c.id}|${procSel}`;
+          const d = st.canalProc[k] || {};
+          return { c, k, inv: num(d.inv), leads: num(d.leads), matric: num(d.matric) };
+        });
+        const T = linhas.reduce((a, l) => ({ inv: a.inv + l.inv, leads: a.leads + l.leads, matric: a.matric + l.matric }), { inv: 0, leads: 0, matric: 0 });
+        return (
         <div className="pc-card">
-          <div className="pc-h">Canais — {ciclo} · {uniNome(uni)}</div>
+          <div className="pc-h">Investimento por canal × processo — {ciclo} · {uniNome(uni)}</div>
+          <div style={{ display: "flex", gap: 12, alignItems: "center", padding: "10px 14px", borderBottom: "1px solid #EDF1F0", flexWrap: "wrap", background: "#FAFBFB" }}>
+            <div className="pc-fld"><span className="pc-lbl">Processo</span>
+              <select className="pc-sel" value={procSel} onChange={(e) => setProcGrade(e.target.value)}>
+                {st.processos.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+              </select>
+            </div>
+            <span className="pc-sub2">Preencha os canais que alimentam <b>{procNome}</b>. Troque o processo para preencher os demais.</span>
+          </div>
           <div className="pc-scroll"><table className="pc-t">
-            <thead><tr><th>Canal</th><th>Investimento</th><th>Leads</th><th>Matrículas</th><th>CPL</th><th>CAC</th><th>Share</th></tr></thead>
+            <thead><tr><th>Canal</th><th>Investimento</th><th>Leads</th><th>Matrículas</th><th>CPL</th><th>CAC</th><th>Conv. lead→mat</th></tr></thead>
             <tbody>
-              {cc.linhas.map((l) => { const k = `${ciclo}|${uni}|${l.c.id}`; const d = st.canal[k] || {};
-                return <tr key={l.c.id}><td>{l.c.nome}{!l.c.pago && <span className="pc-tag">sem verba</span>}</td>
-                  <td><Cell w={110} value={d.inv} onChange={(v) => setCanalLocal(k, "inv", v, uni, l.c.id)} /></td>
-                  <td><Cell value={d.leads} onChange={(v) => setCanalLocal(k, "leads", v, uni, l.c.id)} /></td>
-                  <td><Cell value={d.matric} onChange={(v) => setCanalLocal(k, "matric", v, uni, l.c.id)} /></td>
+              {linhas.map((l) => (
+                <tr key={l.c.id}><td>{l.c.nome}{!l.c.pago && <span className="pc-tag">sem verba</span>}</td>
+                  <td><Cell w={110} value={(st.canalProc[l.k] || {}).inv} onChange={(v) => setCanalProcLocal(l.k, "inv", v, uni, l.c.id, procSel)} /></td>
+                  <td><Cell value={(st.canalProc[l.k] || {}).leads} onChange={(v) => setCanalProcLocal(l.k, "leads", v, uni, l.c.id, procSel)} /></td>
+                  <td><Cell value={(st.canalProc[l.k] || {}).matric} onChange={(v) => setCanalProcLocal(l.k, "matric", v, uni, l.c.id, procSel)} /></td>
                   <td className="m">{isFinite(div(l.inv, l.leads)) ? brl(div(l.inv, l.leads)) : "—"}</td>
                   <td className="m"><b>{isFinite(div(l.inv, l.matric)) ? brl(div(l.inv, l.matric)) : "—"}</b></td>
-                  <td className="m">{pct(div(l.matric, cc.T.matric))}</td></tr>; })}
+                  <td className="m mut">{pct(div(l.matric, l.leads))}</td></tr>
+              ))}
             </tbody>
-            <tfoot><tr><td>Total</td><td className="m">{brl(cc.T.inv)}</td><td className="m">{f0(cc.T.leads)}</td><td className="m">{f0(cc.T.matric)}</td><td></td><td className="m">{isFinite(div(cc.T.inv, cc.T.matric)) ? brl(div(cc.T.inv, cc.T.matric)) : "—"}</td><td>100%</td></tr></tfoot>
+            <tfoot><tr><td>Total {procNome}</td><td className="m">{brl(T.inv)}</td><td className="m">{f0(T.leads)}</td><td className="m">{f0(T.matric)}</td><td></td><td className="m">{isFinite(div(T.inv, T.matric)) ? brl(div(T.inv, T.matric)) : "—"}</td><td className="m">{pct(div(T.matric, T.leads))}</td></tr></tfoot>
           </table></div>
+          <div style={{ fontSize: 11, color: "#4A5C57", padding: "10px 14px", lineHeight: 1.5 }}>
+            <b>CAC</b> = investimento ÷ matrículas do canal neste processo. <b>CPL</b> = investimento ÷ leads. Estes números por canal-processo alimentam o cálculo da aba Verba.
+          </div>
         </div>
-      )}
+        );
+      })()}
 
       {tab === "metas" && (
         <div className="pc-card">
@@ -268,36 +299,95 @@ export default function Planejamento({ podeEditar }) {
         </div>
       )}
 
-      {tab === "verba" && (
+      {tab === "verba" && (() => {
+        // Cálculo canal x processo real, usando o histórico preenchido na aba Canais
+        const alvo = st.cfg.alvo;
+        // ciclos base homólogos para referência do CAC canal-processo
+        const semAlvo = String(alvo).split(".")[1];
+        let baseC = st.ciclos.filter((c) => c < alvo);
+        if (st.cfg.somenteHomologos) baseC = baseC.filter((c) => c.split(".")[1] === semAlvo);
+        baseC = baseC.sort().reverse();
+        const cicloRefCP = baseC[0]; // ciclo homólogo mais recente com dado
+        const anos = E.yearsBetween(cicloRefCP || null, alvo);
+
+        // meta de matrículas por processo (do plano já calculado: up.proc traz mat por processo)
+        const metaPorProc = {};
+        up.proc.forEach((x) => { metaPorProc[x.p.id] = x.mat; });
+
+        // monta linhas agrupadas por processo
+        const grupos = st.processos.map((p) => {
+          // histórico canal-processo no ciclo ref
+          const canais = st.canais.map((c) => {
+            const k = `${cicloRefCP}|${uni}|${c.id}|${p.id}`;
+            const d = st.canalProc[k] || {};
+            return { c, invBase: num(d.inv), matBase: num(d.matric), leadsBase: num(d.leads), cacBase: div(num(d.inv), num(d.matric)) };
+          });
+          const matBaseTotal = canais.reduce((a, x) => a + x.matBase, 0);
+          const metaProc = metaPorProc[p.id] || 0;
+          // distribui a meta do processo entre canais pela proporção histórica de matrícula
+          const linhas = canais.map((x) => {
+            const shareCanal = matBaseTotal > 0 ? x.matBase / matBaseTotal : 0;
+            const matAlvo = metaProc * shareCanal;
+            const infl = st.cfg.inflacao[x.c.id] !== undefined ? st.cfg.inflacao[x.c.id] : 0.07;
+            const pj = E.projectCAC(x.cacBase, infl, anos, x.c.beta, matAlvo, x.matBase, st.cfg.saturacao);
+            const inv = isFinite(pj.cacProj) ? matAlvo * pj.cacProj : 0;
+            return { ...x, shareCanal, matAlvo, infl, cacProj: pj.cacProj, fatSat: pj.fatSat, inv };
+          }).filter((x) => x.matBase > 0 || x.matAlvo > 0);
+          const invProc = linhas.reduce((a, x) => a + (isFinite(x.inv) ? x.inv : 0), 0);
+          return { p, linhas, metaProc, invProc, matBaseTotal };
+        }).filter((g) => g.linhas.length > 0);
+
+        const invGeral = grupos.reduce((a, g) => a + g.invProc, 0);
+        const temDadoCP = grupos.some((g) => g.matBaseTotal > 0);
+
+        return (
         <div className="pc-card">
-          <div className="pc-h">Verba por canal — {uniNome(uni)} · {st.cfg.alvo}
-            <span className="pc-sub2">investimento {brlK(up.invTotal)} · verba {up.verba ? brlK(up.verba) : "—"} · {up.verba ? (up.invTotal - up.verba > 0 ? "gap " + brlK(up.invTotal - up.verba) : "folga " + brlK(up.verba - up.invTotal)) : ""}</span></div>
+          <div className="pc-h">Verba por processo × canal — {uniNome(uni)} · {alvo}
+            <span className="pc-sub2">ref: {cicloRefCP || "sem dado"} · {anos} ano(s) · investimento total {brlK(invGeral)}{up.verba ? " · verba " + brlK(up.verba) + (invGeral - up.verba > 0 ? " · gap " + brlK(invGeral - up.verba) : " · folga " + brlK(up.verba - invGeral)) : ""}</span></div>
+          {!temDadoCP && (
+            <div style={{ padding: "14px 16px", fontSize: 13, color: "#8A6100", background: "#FBF2DC", borderBottom: "1px solid #E8D9A8" }}>
+              Ainda não há histórico canal × processo preenchido para {cicloRefCP || "o ciclo de referência"}. Preencha na aba Canais (escolhendo cada processo) para o cálculo aparecer.
+            </div>
+          )}
           <div className="pc-scroll"><table className="pc-t">
-            <thead><tr><th>Canal</th><th>Share (%)</th><th>Meta</th><th>Base</th><th>Cresc.</th><th>CAC ref.</th><th>Reajuste</th><th>Saturação</th><th>CAC proj.</th><th>Investimento</th></tr></thead>
+            <thead><tr><th>Processo / Canal</th><th>Meta matríc.</th><th>Base matríc.</th><th>Mix canal</th><th>CAC ref.</th><th>Reajuste</th><th>Saturação</th><th>CAC proj.</th><th>Investimento</th></tr></thead>
             <tbody>
-              {up.can.map((x) => { const k = `${st.cfg.alvo}|${uni}`;
-                return <tr key={x.cn.id}><td>{x.cn.nome}</td>
-                  <td><Cell w={60} ph={(x.shareRef * 100).toFixed(1)} value={(st.meta[k] || {})[`ch_${x.cn.id}`]} onChange={(v) => setMetaLocal(k, `ch_${x.cn.id}`, v, uni)} /></td>
-                  <td className="m">{f0(x.mat)}</td><td className="m mut">{f1(x.matBase)}</td>
-                  <td className="m">{x.matBase > 0 ? pct(x.cresc, 0) : "—"}</td>
-                  <td className="m">{isFinite(x.cacBase) ? brl(x.cacBase) : "—"}</td>
-                  <td>{ro ? <span className="m mut">{pct(x.infl, 0)}</span> : <input className="pc-in" style={{ width: 56 }} inputMode="decimal"
-                    defaultValue={(x.infl * 100).toFixed(1)}
-                    title="Reajuste anual do CAC deste canal (%). Enter para salvar."
-                    onBlur={(e) => {
-                      const novo = num(e.target.value) / 100;
-                      setSt((s) => ({ ...s, cfg: { ...s.cfg, inflacao: { ...s.cfg.inflacao, [x.cn.id]: novo } } }));
-                      agendaSalvar("reaj_" + x.cn.id, () => updCanal(x.cn.id, { reajuste: novo }));
-                    }}
-                    onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }} />} <span className="mut" style={{ fontSize: 10 }}>({pct(Math.pow(1 + x.infl, x.anos) - 1, 0)} acum.)</span></td>
-                  <td className="m mut">{x.fatSat > 1 ? "+" + pct(x.fatSat - 1, 0) : "—"}</td>
-                  <td className="m"><b>{isFinite(x.cacProj) ? brl(x.cacProj) : "—"}</b></td>
-                  <td className="m"><b>{x.inv > 0 ? brlK(x.inv) : "—"}</b></td></tr>; })}
+              {grupos.map((g) => (
+                <React.Fragment key={g.p.id}>
+                  <tr style={{ background: "#F2F6F5" }}>
+                    <td style={{ fontWeight: 700 }}>{g.p.nome}</td>
+                    <td className="m" style={{ fontWeight: 700 }}>{f0(g.metaProc)}</td>
+                    <td colSpan={5}></td>
+                    <td className="m" style={{ fontWeight: 700 }}><b>{brlK(g.invProc)}</b></td>
+                  </tr>
+                  {g.linhas.map((x) => (
+                    <tr key={x.c.id}>
+                      <td style={{ paddingLeft: 24 }}>{x.c.nome}</td>
+                      <td className="m">{f0(x.matAlvo)}</td>
+                      <td className="m mut">{f1(x.matBase)}</td>
+                      <td className="m">{pct(x.shareCanal, 0)}</td>
+                      <td className="m">{isFinite(x.cacBase) && x.cacBase > 0 ? brl(x.cacBase) : "—"}</td>
+                      <td>{ro ? <span className="m mut">{pct(x.infl, 0)}</span> : <input className="pc-in" style={{ width: 52 }} inputMode="decimal"
+                        defaultValue={(x.infl * 100).toFixed(1)}
+                        title="Reajuste anual do CAC (%). Enter para salvar."
+                        onBlur={(e) => { const nv = num(e.target.value) / 100; setSt((s) => ({ ...s, cfg: { ...s.cfg, inflacao: { ...s.cfg.inflacao, [x.c.id]: nv } } })); agendaSalvar("reaj_" + x.c.id, () => updCanal(x.c.id, { reajuste: nv })); }}
+                        onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }} />}</td>
+                      <td className="m mut">{x.fatSat > 1 ? "+" + pct(x.fatSat - 1, 0) : "—"}</td>
+                      <td className="m"><b>{isFinite(x.cacProj) ? brl(x.cacProj) : "—"}</b></td>
+                      <td className="m"><b>{x.inv > 0 ? brlK(x.inv) : "—"}</b></td>
+                    </tr>
+                  ))}
+                </React.Fragment>
+              ))}
             </tbody>
-            <tfoot><tr><td>Total</td><td className="m">{pct(up.sharesCanSum, 0)}</td><td className="m">{f0(up.can.reduce((a, x) => a + x.mat, 0))}</td><td colSpan={5}></td><td className="m">{brl(div(up.invTotal, up.matPaga))}</td><td className="m">{brlK(up.invTotal)}</td></tr></tfoot>
+            <tfoot><tr><td>Total geral</td><td colSpan={6}></td><td></td><td className="m"><b>{brlK(invGeral)}</b></td></tr></tfoot>
           </table></div>
+          <div style={{ fontSize: 11, color: "#4A5C57", padding: "10px 14px", lineHeight: 1.5 }}>
+            Para cada processo, a meta é distribuída entre os canais pela proporção histórica de matrículas (mix canal). O CAC de cada canal-processo é projetado para {alvo} com reajuste e saturação. Investimento = meta do canal × CAC projetado.
+          </div>
         </div>
-      )}
+        );
+      })()}
 
       {tab === "cons" && (
         <div className="pc-card">
