@@ -52,8 +52,11 @@ export default function Executivo() {
       const csF = base.filter((c) => cicloUni(c, u).temDado);
       const cyclesF = csF.map((c) => { const x = cicloUni(c, u); const pp = {}; x.linhas.forEach((l) => (pp[l.p.id] = { insc: l.insc, pagas: l.pagas, matric: l.matric })); return { porProc: pp, totalMatric: x.T.matric }; });
       const rf = E.buildFunnelRef(cyclesF, st.processos.map((p) => p.id), cfg.pesos);
-      const shP = E.resolveShares(rf.share, {}, st.processos.map((p) => p.id));
       const m = st.meta[`${cfg.alvo}|${u}`] || {};
+      // respeita os overrides de share gravados na aba Meta (sh_<processo>), igual o Sistema
+      const ovP = {};
+      st.processos.forEach((p) => { const v = num(m[`sh_${p.id}`]); if (v > 0) ovP[p.id] = v; });
+      const shP = E.resolveShares(rf.share, ovP, st.processos.map((p) => p.id));
       const metaMatric = num(m.matric) * (cfg.cenario / 100);
       const out = {}; st.processos.forEach((p) => (out[p.id] = metaMatric * (shP.shares[p.id] || 0)));
       return { out, metaMatric, metaBase: num(m.matric) };
