@@ -24,6 +24,7 @@ export default function Insights() {
   const [st, setSt] = useState(null);
   const [erro, setErro] = useState("");
   const [uniSel, setUniSel] = useState("__holding__");
+  const [parSel, setParSel] = useState("");
 
   useEffect(() => { carregarTudo().then(setSt).catch((e) => setErro(e.message || String(e))); }, []);
 
@@ -44,13 +45,26 @@ export default function Insights() {
 
     // pares de ciclos homólogos disponíveis (ex: 2025.1->2026.1), do mais recente
     const ciclos = st.ciclos.slice().sort();
+    // helper: total de matrículas de um ciclo (todas unidades selecionadas, todos processos)
+    const totalCiclo = (cic) => {
+      let t = 0;
+      alvoUnis.forEach((u) => st.processos.forEach((p) => { t += g(st.funil, `${cic}|${u}|${p.id}`, "matric"); }));
+      return t;
+    };
     const pares = [];
     ciclos.forEach((cic) => {
       const [ano, sem] = cic.split(".");
       const anoAnt = String(Number(ano) - 1) + "." + sem;
-      if (ciclos.includes(anoAnt)) pares.push({ de: anoAnt, para: cic });
+      if (ciclos.includes(anoAnt)) {
+        const comDado = totalCiclo(anoAnt) > 0 && totalCiclo(cic) > 0;
+        pares.push({ de: anoAnt, para: cic, comDado });
+      }
     });
-    const parRecente = pares[pares.length - 1]; // comparação principal
+    // pares que têm dado nos DOIS lados
+    const paresValidos = pares.filter((x) => x.comDado);
+    // par a usar: o escolhido pelo usuário (se válido), senão o mais recente COM dado nos dois lados
+    const parEscolhido = parSel ? paresValidos.find((x) => `${x.de}|${x.para}` === parSel) : null;
+    const parRecente = parEscolhido || paresValidos[paresValidos.length - 1]; // comparação principal
 
     // DIAGNÓSTICO por processo (camadas 1, 2, 3) para o par mais recente
     const diagnosticos = [];
@@ -110,7 +124,7 @@ export default function Insights() {
       porGrupo[d.grupo].matA += d.a.matric; porGrupo[d.grupo].matB += d.b.matric;
     });
 
-    return { diagnosticos, parRecente, pares, porGrupo,
+    return { diagnosticos, parRecente, pares, paresValidos, porGrupo,
       nomeUni: uniSel === "__holding__" ? "Holding (todas as unidades)" : (st.unidades.find((u) => u.id === uniSel) || {}).nome };
   }, [st, uniSel]);
 
@@ -133,8 +147,15 @@ export default function Insights() {
             {st.unidades.map((u) => <option key={u.id} value={u.id}>{u.nome}</option>)}
           </select>
         </div>
+        {D.paresValidos.length > 0 && (
+          <div style={fld}><span style={lbl}>Comparar</span>
+            <select style={sel} value={parSel || (D.parRecente ? `${D.parRecente.de}|${D.parRecente.para}` : "")} onChange={(e) => setParSel(e.target.value)}>
+              {D.paresValidos.slice().reverse().map((x) => <option key={`${x.de}|${x.para}`} value={`${x.de}|${x.para}`}>{x.de} → {x.para}</option>)}
+            </select>
+          </div>
+        )}
         <div style={{ marginLeft: "auto", fontSize: 12, color: "#4A5C57" }}>
-          {D.parRecente ? `Comparando ${D.parRecente.de} → ${D.parRecente.para} (ciclos homólogos)` : "Sem par homólogo"}
+          {D.parRecente ? `${D.parRecente.de} → ${D.parRecente.para} (homólogos, com dado)` : "Sem par com dado nos dois lados"}
         </div>
       </div>
 
@@ -146,7 +167,8 @@ export default function Insights() {
 
       {!D.parRecente && (
         <div style={card}><div style={{ padding: 20, color: "#4A5C57", fontSize: 13 }}>
-          Ainda não há dois ciclos homólogos preenchidos (ex: 2025.1 e 2026.1). Preencha na aba Sistema para o diagnóstico aparecer.
+          Não há dois ciclos homólogos com dados preenchidos nos dois lados (ex: 2025.1 e 2026.1 ambos com matrículas).
+          Preencha os ciclos na aba Sistema — o diagnóstico compara sempre o ano anterior com o atual da mesma entrada (.1 com .1, .2 com .2).
         </div></div>
       )}
 
