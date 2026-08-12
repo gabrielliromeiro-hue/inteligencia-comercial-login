@@ -10,6 +10,19 @@ const div = E.safeDiv;
 const num = E.parseNum;
 const PALETA = ["#0F5F4E", "#2E8B72", "#5AAD95", "#8A6100", "#B08A3E", "#4A5C57", "#7D8F89"];
 
+// célula do funil: número + cor + seta comparando ao ciclo homólogo
+function funilCell(cell) {
+  if (!cell || !(cell.val > 0)) return "—";
+  const v = cell.varPct;
+  if (v == null) return f0v(cell.val);
+  const cor = v > 0.001 ? "#0F5F4E" : v < -0.001 ? "#9B1C1C" : "#4A5C57";
+  const seta = v > 0.001 ? "▲" : v < -0.001 ? "▼" : "";
+  return (
+    <span style={{ color: cor }}>{f0v(cell.val)} <span style={{ fontSize: 9 }}>{seta}</span></span>
+  );
+}
+function f0v(n) { return isFinite(n) ? Math.round(n).toLocaleString("pt-BR") : "—"; }
+
 export default function Executivo() {
   const [st, setSt] = useState(null);
   const [erro, setErro] = useState("");
@@ -159,11 +172,52 @@ export default function Executivo() {
       insc: a.insc + x.insc, pagas: a.pagas + x.pagas, aprov: a.aprov + x.aprov, conv: a.conv + x.conv, matric: a.matric + x.matric,
     }), { insc: 0, pagas: 0, aprov: 0, conv: 0, matric: 0 });
 
+    // Funil por etapa AO LONGO DOS CICLOS (para a tabela de evolução do funil)
+    const ciclosSeq = st.ciclos.slice().sort();
+    const somaEtapasCiclo = (cic, pid) => {
+      let insc = 0, pagas = 0, aprov = 0, conv = 0, matric = 0;
+      alvoUnis.forEach((u) => {
+        const filtro = pid ? [pid] : st.processos.map((p) => p.id);
+        filtro.forEach((id) => {
+          const k = `${cic}|${u}|${id}`;
+          insc += g(st.funil, k, "insc"); pagas += g(st.funil, k, "pagas");
+          aprov += g(st.funil, k, "aprovados"); conv += g(st.funil, k, "convocados"); matric += g(st.funil, k, "matric");
+        });
+      });
+      return { insc, pagas, aprov, conv, matric };
+    };
+    // homólogo de um ciclo (ano anterior, mesmo semestre)
+    const homologoDe = (cic) => { const [a, s] = cic.split("."); const h = (Number(a) - 1) + "." + s; return ciclosSeq.includes(h) ? h : null; };
+    const etapasDef = [["insc", "Inscritos"], ["pagas", "Inscritos pagos"], ["aprov", "Aprovados"], ["conv", "Convocados"], ["matric", "Matriculados"]];
+    // monta a evolução: para cada etapa, os valores por ciclo + variação vs homólogo
+    const evolFunil = (pid) => {
+      const porCicloRaw = {};
+      ciclosSeq.forEach((c) => (porCicloRaw[c] = somaEtapasCiclo(c, pid)));
+      // só ciclos com algum dado
+      const ciclosComDado = ciclosSeq.filter((c) => { const d = porCicloRaw[c]; return d.insc + d.pagas + d.aprov + d.conv + d.matric > 0; });
+      return etapasDef.map(([campo, rot]) => {
+        const cells = ciclosComDado.map((c) => {
+          const val = porCicloRaw[c][campo];
+          const h = homologoDe(c);
+          const valH = h && ciclosComDado.includes(h) ? porCicloRaw[h][campo] : null;
+          const varPct = (valH != null && valH > 0) ? (val - valH) / valH : null;
+          return { ciclo: c, val, varPct };
+        });
+        // variação do último ciclo com homólogo (para a coluna final)
+        const ultComVar = [...cells].reverse().find((x) => x.varPct != null);
+        return { campo, rot, cells, varFinal: ultComVar ? ultComVar.varPct : null };
+      });
+    };
+    const evolFunilTotal = evolFunil(null);
+    const ciclosFunil = (() => { const s = new Set(); evolFunilTotal.forEach((e) => e.cells.forEach((c) => s.add(c.ciclo))); return Array.from(s).sort(); })();
+    const evolFunilPorProc = st.processos.map((p) => ({ nome: p.nome, linhas: evolFunil(p.id) }))
+      .filter((x) => x.linhas.some((l) => l.cells.some((c) => c.val > 0)));
+
     return { linhas, histTotal, projTotal, metaTotal, metaHist, matrizShare, ciclosHistoricos, alvo: cfg.alvo, cenario: cfg.cenario, cicloHist,
       projSelfPaid, projFies, projTransf, projTransfFies, projRecuperado,
       histSelfPaid, histFies, histTransf, histTransfFies, histRecuperado,
       convGlobalHist, cacHist, cpiHist, previsaoInscritos, vagasTot, projOcupaVaga, projNaoOcupa,
-      funilEtapas, funilTotal,
+      funilEtapas, funilTotal, evolFunilTotal, evolFunilPorProc, ciclosFunil,
       nomeUni: uniSel === "__holding__" ? "Holding (todas as unidades)" : (st.unidades.find((u) => u.id === uniSel) || {}).nome };
   }, [st, uniSel, cicloHist]);
 
@@ -337,6 +391,65 @@ export default function Executivo() {
         </div>
         <div style={legenda}>Etapas nas linhas, processos nas colunas. Aprovados e convocados aparecem quando preenchidos na aba Sistema. Troque o ciclo no filtro acima.</div>
       </div>
+
+      {/* Evolução do funil por etapa ao longo dos ciclos */}
+      <div style={card}>
+        <div style={cardH}>Evolução do funil por ciclo — {D.nomeUni}</div>
+        <div style={{ overflowX: "auto" }}>
+          <table style={tbl}>
+            <thead><tr>
+              <th style={{ ...th, textAlign: "left" }}>Etapa</th>
+              {D.ciclosFunil.map((c) => <th key={c} style={th}>{c}</th>)}
+              <th style={thP}>Var. homólogo</th>
+            </tr></thead>
+            <tbody>
+              {D.evolFunilTotal.map((e, ri) => (
+                <tr key={ri}>
+                  <td style={tdL}>{e.rot}</td>
+                  {D.ciclosFunil.map((c) => {
+                    const cell = e.cells.find((x) => x.ciclo === c);
+                    return <td key={c} style={td}>{funilCell(cell)}</td>;
+                  })}
+                  <td style={{ ...td, background: "#F5F9F8", fontWeight: 700, color: e.varFinal > 0 ? "#0F5F4E" : e.varFinal < 0 ? "#9B1C1C" : "#4A5C57" }}>
+                    {e.varFinal != null ? (e.varFinal > 0 ? "▲ " : e.varFinal < 0 ? "▼ " : "") + pct(Math.abs(e.varFinal), 0) : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div style={legenda}>Cada número comparado ao <b>ciclo homólogo</b> (mesmo semestre do ano anterior): <span style={{ color: "#0F5F4E" }}>▲ verde subiu</span>, <span style={{ color: "#9B1C1C" }}>▼ vermelho caiu</span>. A última coluna é a variação da etapa no ciclo mais recente vs seu homólogo. Compara .1 com .1 e .2 com .2, nunca início com meio de ano.</div>
+      </div>
+
+      {/* Evolução do funil por PROCESSO */}
+      {D.evolFunilPorProc.map((proc, pi) => (
+        <div key={pi} style={card}>
+          <div style={cardH}>Funil por ciclo — {proc.nome}</div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={tbl}>
+              <thead><tr>
+                <th style={{ ...th, textAlign: "left" }}>Etapa</th>
+                {D.ciclosFunil.map((c) => <th key={c} style={th}>{c}</th>)}
+                <th style={thP}>Var. homólogo</th>
+              </tr></thead>
+              <tbody>
+                {proc.linhas.map((e, ri) => (
+                  <tr key={ri}>
+                    <td style={tdL}>{e.rot}</td>
+                    {D.ciclosFunil.map((c) => {
+                      const cell = e.cells.find((x) => x.ciclo === c);
+                      return <td key={c} style={td}>{funilCell(cell)}</td>;
+                    })}
+                    <td style={{ ...td, background: "#F5F9F8", fontWeight: 700, color: e.varFinal > 0 ? "#0F5F4E" : e.varFinal < 0 ? "#9B1C1C" : "#4A5C57" }}>
+                      {e.varFinal != null ? (e.varFinal > 0 ? "▲ " : e.varFinal < 0 ? "▼ " : "") + pct(Math.abs(e.varFinal), 0) : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ))}
 
       {/* Matriz share por periodo */}
       <div style={card}>
