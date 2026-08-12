@@ -213,11 +213,69 @@ export default function Executivo() {
     const evolFunilPorProc = st.processos.map((p) => ({ nome: p.nome, linhas: evolFunil(p.id) }))
       .filter((x) => x.linhas.some((l) => l.cells.some((c) => c.val > 0)));
 
+    // ==== EFICIÊNCIA DE VERBA e COMPARAÇÃO ENTRE UNIDADES ====
+    // ciclo de referência para CAC canal-processo
+    const semAlvoE = String(cfg.alvo).split(".")[1];
+    let baseCP = st.ciclos.filter((c) => c < cfg.alvo);
+    if (cfg.somenteHomologos) baseCP = baseCP.filter((c) => c.split(".")[1] === semAlvoE);
+    baseCP = baseCP.sort().reverse();
+    const cicloRefE = baseCP[0];
+    const anosE = E.yearsBetween(cicloRefE || null, cfg.alvo);
+
+    // por unidade: meta, CAC projetado agregado, investimento, conversão ref, ocupação, verba/gap
+    const compUnidades = st.unidades.filter((u) => alvoUnis.includes(u.id)).map((u) => {
+      const pj = projUniProc(u.id);
+      const m = st.meta[`${cfg.alvo}|${u.id}`] || {};
+      const vagas = num(m.vagas);
+      // CAC projetado agregado da unidade: soma investimento / soma matrícula, por canal-processo
+      let invTot = 0, matComCanal = 0;
+      st.canais.forEach((c) => {
+        st.processos.forEach((p) => {
+          const k = `${cicloRefE}|${u.id}|${c.id}|${p.id}`;
+          const d = st.canalProc[k] || {};
+          const invB = num(d.inv), matB = num(d.matric);
+          if (matB > 0) {
+            const cacB = invB / matB;
+            const infl = cfg.inflacao[c.id] !== undefined ? cfg.inflacao[c.id] : 0.07;
+            // meta desse canal-processo pela proporção histórica simplificada
+            const metaCP = pj.out[p.id] || 0; // meta do processo (aprox; refinado no Sistema)
+            const pjc = E.projectCAC(cacB, infl, anosE, c.beta, metaCP, matB, cfg.saturacao);
+            if (isFinite(pjc.cacProj)) { invTot += metaCP * pjc.cacProj * (matB / Math.max(1, matB)); }
+          }
+        });
+      });
+      // conversão global de referência
+      let insc = 0, mat = 0;
+      st.processos.forEach((p) => { insc += g(st.funil, `${cicloRefE}|${u.id}|${p.id}`, "insc"); mat += g(st.funil, `${cicloRefE}|${u.id}|${p.id}`, "matric"); });
+      const convRef = div(mat, insc);
+      const mens = u.mensalidade || 0;
+      const cacUnidade = div(invTot, pj.metaMatric);
+      return { u, meta: pj.metaMatric, vagas, ocupacao: div(pj.metaMatric, vagas), inv: invTot, verba: num(m.verba), gap: invTot - num(m.verba), cacProj: cacUnidade, convRef, mens, custoPorReceita: mens > 0 ? div(cacUnidade, mens * 6) : NaN };
+    }).filter((x) => x.meta > 0 || x.inv > 0);
+
+    // eficiência por canal (holding): CAC projetado no volume da meta, separando escalável x não
+    const canalEfic = st.canais.map((c) => {
+      let invB = 0, matB = 0;
+      alvoUnis.forEach((u) => st.processos.forEach((p) => {
+        const d = st.canalProc[`${cicloRefE}|${u}|${c.id}|${p.id}`] || {};
+        invB += num(d.inv); matB += num(d.matric);
+      }));
+      const cacB = div(invB, matB);
+      const infl = cfg.inflacao[c.id] !== undefined ? cfg.inflacao[c.id] : 0.07;
+      // volume alvo do canal = proporção histórica do canal na holding × meta total
+      const matMetaCanal = matB; // referência; o volume real vem do plano
+      const pjc = E.projectCAC(cacB, infl, anosE, c.beta, matMetaCanal, matB, cfg.saturacao);
+      return { c, escalavel: c.pago !== false, cacBase: cacB, cacProj: pjc.cacProj, matBase: matB, invBase: invB };
+    }).filter((x) => x.matBase > 0);
+    const canalEsc = canalEfic.filter((x) => x.escalavel).sort((a, b) => (a.cacProj || 1e18) - (b.cacProj || 1e18));
+    const canalNaoEsc = canalEfic.filter((x) => !x.escalavel).sort((a, b) => (a.cacProj || 1e18) - (b.cacProj || 1e18));
+
     return { linhas, histTotal, projTotal, metaTotal, metaHist, matrizShare, ciclosHistoricos, alvo: cfg.alvo, cenario: cfg.cenario, cicloHist,
       projSelfPaid, projFies, projTransf, projTransfFies, projRecuperado,
       histSelfPaid, histFies, histTransf, histTransfFies, histRecuperado,
       convGlobalHist, cacHist, cpiHist, previsaoInscritos, vagasTot, projOcupaVaga, projNaoOcupa,
       funilEtapas, funilTotal, evolFunilTotal, evolFunilPorProc, ciclosFunil,
+      compUnidades, canalEsc, canalNaoEsc, cicloRefE,
       nomeUni: uniSel === "__holding__" ? "Holding (todas as unidades)" : (st.unidades.find((u) => u.id === uniSel) || {}).nome };
   }, [st, uniSel, cicloHist]);
 
@@ -295,6 +353,76 @@ export default function Executivo() {
           <div style={kpiSub}>{D.vagasTot > 0 ? "vaga = meta · exclui transf. e recuperado" : "defina vagas na aba Sistema"}</div>
         </div>
       </div>
+
+      {/* Comparação entre unidades (só faz sentido na holding) */}
+      {uniSel === "__holding__" && D.compUnidades.length > 1 && (
+        <div style={card}>
+          <div style={cardH}>Comparação entre unidades — {D.alvo}</div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={tbl}>
+              <thead><tr>
+                <th style={{ ...th, textAlign: "left" }}>Unidade</th>
+                <th style={th}>Meta</th><th style={th}>Ocupação</th><th style={th}>Conv. ref.</th>
+                <th style={th}>CAC proj.</th><th style={th}>Investimento</th><th style={th}>Verba</th><th style={th}>Gap</th>
+              </tr></thead>
+              <tbody>
+                {D.compUnidades.map((x) => (
+                  <tr key={x.u.id}>
+                    <td style={tdL}>{x.u.nome}</td>
+                    <td style={td}>{f0(x.meta)}</td>
+                    <td style={td}>{x.vagas > 0 ? pct(x.ocupacao) : "—"}</td>
+                    <td style={td}>{pct(x.convRef, 1)}</td>
+                    <td style={td}>{isFinite(x.cacProj) && x.cacProj > 0 ? brl(x.cacProj) : "—"}</td>
+                    <td style={td}>{brlK(x.inv)}</td>
+                    <td style={td}>{x.verba > 0 ? brlK(x.verba) : "—"}</td>
+                    <td style={{ ...td, color: x.gap > 0 ? "#9B1C1C" : "#0F5F4E" }}>{x.verba > 0 ? brlK(x.gap) : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={legenda}>CAC projetado no volume da meta (com saturação). <b>Conv. ref.</b> = conversão inscrito→matrícula do ciclo {D.cicloRefE}. Gap em <span style={{ color: "#9B1C1C" }}>vermelho</span> = investimento maior que a verba.</div>
+        </div>
+      )}
+
+      {/* Eficiência de verba por canal */}
+      {(D.canalEsc.length > 0 || D.canalNaoEsc.length > 0) && (
+        <div style={card}>
+          <div style={cardH}>Eficiência de verba por canal — {D.nomeUni}</div>
+          <div style={{ padding: "10px 16px 0", fontSize: 12, color: "#4A5C57" }}>
+            Canais ordenados por menor CAC projetado. <b>Só os escaláveis</b> aceitam mais verba para trazer mais matrícula — os não-escaláveis (indicação, orgânico) aparecem como referência, mas não são acionáveis por investimento.
+          </div>
+          <div style={{ overflowX: "auto", marginTop: 8 }}>
+            <table style={tbl}>
+              <thead><tr>
+                <th style={{ ...th, textAlign: "left" }}>Canal</th><th style={th}>Tipo</th>
+                <th style={th}>CAC ref.</th><th style={th}>CAC projetado</th><th style={th}>Matríc. base</th>
+              </tr></thead>
+              <tbody>
+                {D.canalEsc.map((x, i) => (
+                  <tr key={x.c.id}>
+                    <td style={tdL}>{i === 0 && <span style={{ color: "#0F5F4E", fontWeight: 700, marginRight: 5 }}>★</span>}{x.c.nome}</td>
+                    <td style={{ ...td, textAlign: "left" }}><span style={{ background: "#E4EFEB", color: "#0F5F4E", fontSize: 9.5, fontWeight: 700, padding: "2px 7px", borderRadius: 9 }}>escala com verba</span></td>
+                    <td style={tdMut}>{isFinite(x.cacBase) && x.cacBase > 0 ? brl(x.cacBase) : "—"}</td>
+                    <td style={{ ...td, fontWeight: 700 }}>{isFinite(x.cacProj) && x.cacProj > 0 ? brl(x.cacProj) : "—"}</td>
+                    <td style={tdMut}>{f0(x.matBase)}</td>
+                  </tr>
+                ))}
+                {D.canalNaoEsc.map((x) => (
+                  <tr key={x.c.id} style={{ opacity: 0.7 }}>
+                    <td style={tdL}>{x.c.nome}</td>
+                    <td style={{ ...td, textAlign: "left" }}><span style={{ background: "#EDF1F0", color: "#4A5C57", fontSize: 9.5, fontWeight: 700, padding: "2px 7px", borderRadius: 9 }}>não escala</span></td>
+                    <td style={tdMut}>{isFinite(x.cacBase) && x.cacBase > 0 ? brl(x.cacBase) : "—"}</td>
+                    <td style={td}>{isFinite(x.cacProj) && x.cacProj > 0 ? brl(x.cacProj) : "—"}</td>
+                    <td style={tdMut}>{f0(x.matBase)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={legenda}>★ = canal escalável mais eficiente (menor CAC projetado): onde o próximo real de verba tende a render mais matrícula. Atenção: CAC baixo em canal que não escala (indicação) não é acionável — não adianta "investir mais" onde o volume não responde a verba.</div>
+        </div>
+      )}
 
       {/* Tabela principal */}
       <div style={card}>
