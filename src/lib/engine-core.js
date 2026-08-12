@@ -44,6 +44,34 @@ function weightedMean(pairs) {
   return den > 0 ? num / den : NaN;
 }
 
+/* projeção por TENDÊNCIA com freio moderado.
+   serie: array de shares por ciclo, do MAIS ANTIGO ao MAIS RECENTE.
+   Captura a direção (inclinação média entre pontos consecutivos) e projeta
+   um passo além do último ponto, mas LIMITA a variação a um teto relativo,
+   para não extrapolar exponencialmente. Também trava em [0, 1].
+   freio: fração máxima de variação permitida sobre o último ponto (0.5 = ±50%). */
+function trendProject(serie, freio) {
+  var pts = serie.filter(function (v) { return isFinite(v); });
+  if (pts.length === 0) return NaN;
+  if (pts.length === 1) return pts[0];
+  var ultimo = pts[pts.length - 1];
+  // inclinação média entre pontos consecutivos
+  var somaDelta = 0, n = 0;
+  for (var i = 1; i < pts.length; i++) { somaDelta += pts[i] - pts[i - 1]; n++; }
+  var passo = n > 0 ? somaDelta / n : 0;
+  var proj = ultimo + passo;
+  // FREIO: não deixa a projeção variar mais que `freio` sobre o último ponto
+  var f = isFinite(freio) && freio > 0 ? freio : 0.5;
+  var limSup = ultimo * (1 + f) + 0.02; // +0.02 dá folga quando ultimo é pequeno
+  var limInf = ultimo * (1 - f);
+  if (proj > limSup) proj = limSup;
+  if (proj < limInf) proj = limInf;
+  if (proj < 0) proj = 0;
+  if (proj > 1) proj = 1;
+  return proj;
+}
+
+
 /* funil reverso: matrículas -> inscrições pagas -> inscrições
    conv = paga->matrícula histórica; ganho = fator multiplicador (1 = sem ganho)
    taxaPag = inscrição->paga histórica */
@@ -70,12 +98,18 @@ function projectCAC(cacBase, inflacao, anos, beta, metaVol, baseVol, saturacaoOn
    devolve por processo: share normalizado, taxaPag, conv */
 function buildFunnelRef(cycles, procIds, pesos) {
   var w = effectiveWeights(cycles.length, pesos);
-  var rawShare = {}, taxaPag = {}, conv = {};
+  var rawShare = {}, rawShareTrend = {}, taxaPag = {}, conv = {};
   procIds.forEach(function (pid) {
     rawShare[pid] = weightedMean(cycles.map(function (c, i) {
       var l = c.porProc[pid] || {};
       return { value: c.totalMatric > 0 ? (l.matric || 0) / c.totalMatric : NaN, weight: w[i] };
     }));
+    // série de shares do MAIS ANTIGO ao MAIS RECENTE (cycles vem do mais recente primeiro, então invertemos)
+    var serie = cycles.slice().reverse().map(function (c) {
+      var l = c.porProc[pid] || {};
+      return c.totalMatric > 0 ? (l.matric || 0) / c.totalMatric : NaN;
+    });
+    rawShareTrend[pid] = trendProject(serie, 0.5); // freio moderado: ±50%
     taxaPag[pid] = weightedMean(cycles.map(function (c, i) {
       var l = c.porProc[pid] || {};
       return { value: (l.insc || 0) > 0 ? (l.pagas || 0) / l.insc : NaN, weight: w[i] };
@@ -85,8 +119,9 @@ function buildFunnelRef(cycles, procIds, pesos) {
       return { value: (l.pagas || 0) > 0 ? (l.matric || 0) / l.pagas : NaN, weight: w[i] };
     }));
     if (!isFinite(rawShare[pid])) rawShare[pid] = 0;
+    if (!isFinite(rawShareTrend[pid])) rawShareTrend[pid] = rawShare[pid];
   });
-  return { share: normalizeShares(rawShare), taxaPag: taxaPag, conv: conv };
+  return { share: normalizeShares(rawShare), shareTrend: normalizeShares(rawShareTrend), taxaPag: taxaPag, conv: conv };
 }
 
 /* referência de canal a partir de ciclos históricos
@@ -167,5 +202,5 @@ function validatePlan(p) {
 export {
   parseNum, safeDiv, effectiveWeights, normalizeShares, weightedMean,
   funnelReverse, projectCAC, buildFunnelRef, buildChannelRef,
-  resolveShares, yearsBetween, validatePlan,
+  resolveShares, yearsBetween, validatePlan, trendProject,
 };
