@@ -3,10 +3,22 @@ import * as E from "./lib/engine-core.js";
 import { carregarTudo } from "./lib/dados.js";
 
 const f0 = (n) => (isFinite(n) ? Math.round(n).toLocaleString("pt-BR") : "—");
-const pct = (n, d = 0) => (isFinite(n) ? (n * 100).toLocaleString("pt-BR", { minimumFractionDigits: d, maximumFractionDigits: d }) + "%" : "—");
+const f1 = (n) => (isFinite(n) ? n.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : "—");
+const pct = (n, d = 1) => (isFinite(n) ? (n * 100).toLocaleString("pt-BR", { minimumFractionDigits: d, maximumFractionDigits: d }) + "%" : "—");
+const sgn = (n) => (n > 0 ? "+" : "") + f0(n);
 const brl = (n) => (isFinite(n) ? "R$ " + Math.round(n).toLocaleString("pt-BR") : "—");
 const div = E.safeDiv;
 const num = E.parseNum;
+
+// grupo de processo (mesma regra da Executiva)
+const grupoDe = (nome) => {
+  const n = (nome || "").toLowerCase();
+  if (n.includes("transfer") && n.includes("fies")) return "Transferência FIES";
+  if (n.includes("transfer")) return "Transferência";
+  if (n.includes("recuper")) return "Recuperado";
+  if (n.includes("fies")) return "FIES";
+  return "Self paid";
+};
 
 export default function Insights() {
   const [st, setSt] = useState(null);
@@ -19,77 +31,99 @@ export default function Insights() {
     if (!st) return null;
     const g = (o, k, c) => num((o[k] || {})[c]);
     const alvoUnis = uniSel === "__holding__" ? st.unidades.map((u) => u.id) : [uniSel];
-    const ciclosPassados = st.ciclos.filter((c) => c <= st.ciclos[st.ciclos.length - 1]).sort();
 
-    // agrega por ciclo (soma unidades selecionadas)
-    const porCiclo = ciclosPassados.map((cic) => {
-      let insc = 0, pagas = 0, matric = 0, inv = 0;
-      alvoUnis.forEach((u) => st.processos.forEach((p) => {
-        const k = `${cic}|${u}|${p.id}`;
+    // agrega funil de um processo num ciclo (somando unidades selecionadas)
+    const dadoProc = (cic, pid) => {
+      let insc = 0, pagas = 0, matric = 0;
+      alvoUnis.forEach((u) => {
+        const k = `${cic}|${u}|${pid}`;
         insc += g(st.funil, k, "insc"); pagas += g(st.funil, k, "pagas"); matric += g(st.funil, k, "matric");
-      }));
-      alvoUnis.forEach((u) => st.canais.forEach((cn) => { inv += g(st.canal, `${cic}|${u}|${cn.id}`, "inv"); }));
-      return { ciclo: cic, insc, pagas, matric, inv, taxaPag: div(pagas, insc), conv: div(matric, pagas), cac: div(inv, matric), temDado: insc + pagas + matric > 0 };
-    }).filter((x) => x.temDado);
+      });
+      return { insc, pagas, matric, taxaPag: div(pagas, insc), convPagaMat: div(matric, pagas), convGlobal: div(matric, insc) };
+    };
 
-    // ==== INSIGHTS por regras auditáveis ====
-    const ins = [];
-    if (porCiclo.length >= 2) {
-      // 1. ciclo com maior taxa de pagamento
-      const maxPag = [...porCiclo].filter(c => isFinite(c.taxaPag)).sort((a, b) => b.taxaPag - a.taxaPag)[0];
-      const mediaPag = porCiclo.filter(c => isFinite(c.taxaPag)).reduce((a, c) => a + c.taxaPag, 0) / porCiclo.filter(c => isFinite(c.taxaPag)).length;
-      if (maxPag && maxPag.taxaPag > mediaPag * 1.05) {
-        ins.push({ tipo: "padrao", titulo: `${maxPag.ciclo} teve a maior taxa de pagamento de inscrição`,
-          texto: `Naquele ciclo, ${pct(maxPag.taxaPag)} dos inscritos pagaram a taxa, contra média de ${pct(mediaPag)} no período. Isso rendeu ${f0(maxPag.pagas)} inscrições pagas.`,
-          hipotese: `Vale investigar o que foi diferente em ${maxPag.ciclo} (campanha, prazo, valor da taxa, mix de canal). Se for replicável, é alavanca de topo de funil para o próximo ciclo.` });
-      }
-      // 2. correlação inscritos pagos -> matrículas
-      const maxPagas = [...porCiclo].sort((a, b) => b.pagas - a.pagas)[0];
-      const maxMatric = [...porCiclo].sort((a, b) => b.matric - a.matric)[0];
-      if (maxPagas && maxMatric && maxPagas.ciclo === maxMatric.ciclo) {
-        ins.push({ tipo: "correlacao", titulo: `Mais inscrições pagas acompanhou mais matrículas em ${maxPagas.ciclo}`,
-          texto: `O ciclo com mais inscrições pagas (${f0(maxPagas.pagas)}) foi também o de mais matrículas (${f0(maxMatric.matric)}). A conversão paga→matrícula foi ${pct(maxPagas.conv)}.`,
-          hipotese: `Os dados são consistentes com a tese de "encher a boca do funil": mais inscrições pagas tenderam a virar mais matrículas. ATENÇÃO: é correlação, não prova de causa — pode ter havido campanha ou vestibular extra naquele ciclo. Teste aumentando inscrições pagas de forma controlada e meça se a conversão se mantém.` });
-      }
-      // 3. tendência de conversão
-      const comConv = porCiclo.filter(c => isFinite(c.conv));
-      if (comConv.length >= 3) {
-        const ult3 = comConv.slice(-3);
-        if (ult3[0].conv > ult3[1].conv && ult3[1].conv > ult3[2].conv) {
-          ins.push({ tipo: "alerta", titulo: `Conversão paga→matrícula caindo há 3 ciclos`,
-            texto: `Passou de ${pct(ult3[0].conv)} para ${pct(ult3[2].conv)}. Você está trazendo inscrições pagas, mas elas viram matrícula com menos eficiência.`,
-            hipotese: `Encher o funil pode não bastar se o fundo está furando. Vale olhar o processo de matrícula (atendimento, prazo, condição de pagamento) antes de só aumentar investimento de topo.` });
-        } else if (ult3[0].conv < ult3[1].conv && ult3[1].conv < ult3[2].conv) {
-          ins.push({ tipo: "positivo", titulo: `Conversão paga→matrícula melhorando há 3 ciclos`,
-            texto: `Subiu de ${pct(ult3[0].conv)} para ${pct(ult3[2].conv)}. O fundo do funil está mais eficiente.`,
-            hipotese: `Com o fundo melhorando, investir mais em topo de funil tende a ter retorno maior agora do que antes. Momento favorável para escalar captação.` });
+    // pares de ciclos homólogos disponíveis (ex: 2025.1->2026.1), do mais recente
+    const ciclos = st.ciclos.slice().sort();
+    const pares = [];
+    ciclos.forEach((cic) => {
+      const [ano, sem] = cic.split(".");
+      const anoAnt = String(Number(ano) - 1) + "." + sem;
+      if (ciclos.includes(anoAnt)) pares.push({ de: anoAnt, para: cic });
+    });
+    const parRecente = pares[pares.length - 1]; // comparação principal
+
+    // DIAGNÓSTICO por processo (camadas 1, 2, 3) para o par mais recente
+    const diagnosticos = [];
+    if (parRecente) {
+      st.processos.forEach((p) => {
+        const a = dadoProc(parRecente.de, p.id);   // antes
+        const b = dadoProc(parRecente.para, p.id);  // depois
+        if (a.matric + b.matric === 0) return; // sem dado nesse processo
+
+        const grupo = grupoDe(p.nome);
+        const deltaMat = b.matric - a.matric;
+
+        // CAMADA 1 — decomposição volume vs conversão
+        // efeito volume: variação de inscrições × conversão global antiga
+        // efeito conversão: inscrições novas × variação de conversão global
+        const efeitoVolume = (b.insc - a.insc) * (isFinite(a.convGlobal) ? a.convGlobal : 0);
+        const efeitoConversao = b.insc * ((isFinite(b.convGlobal) ? b.convGlobal : 0) - (isFinite(a.convGlobal) ? a.convGlobal : 0));
+
+        // CAMADA 2 — onde está o gargalo (qual etapa vazou mais, comparando as taxas)
+        const deltaTaxaPag = (isFinite(b.taxaPag) ? b.taxaPag : 0) - (isFinite(a.taxaPag) ? a.taxaPag : 0);
+        const deltaConvPM = (isFinite(b.convPagaMat) ? b.convPagaMat : 0) - (isFinite(a.convPagaMat) ? a.convPagaMat : 0);
+        let gargalo = null;
+        if (deltaMat < 0) {
+          // onde piorou mais
+          if (deltaTaxaPag < -0.02 && deltaTaxaPag <= deltaConvPM) gargalo = { etapa: "inscrito → pago", queda: deltaTaxaPag, de: a.taxaPag, para: b.taxaPag };
+          else if (deltaConvPM < -0.02) gargalo = { etapa: "pago → matrícula", queda: deltaConvPM, de: a.convPagaMat, para: b.convPagaMat };
         }
-      }
-      // 4. eficiência de CAC
-      const comCac = porCiclo.filter(c => isFinite(c.cac) && c.cac > 0);
-      if (comCac.length >= 2) {
-        const melhorCac = [...comCac].sort((a, b) => a.cac - b.cac)[0];
-        ins.push({ tipo: "padrao", titulo: `${melhorCac.ciclo} teve o melhor custo por matrícula`,
-          texto: `CAC de ${brl(melhorCac.cac)} naquele ciclo, o mais baixo do histórico. Trouxe ${f0(melhorCac.matric)} matrículas com ${brl(melhorCac.inv)} de investimento.`,
-          hipotese: `Entender o mix de canais de ${melhorCac.ciclo} pode revelar a alocação mais eficiente para replicar no próximo ciclo.` });
-      }
+
+        // CAMADA 3 — o que testar (hipótese, com ressalva de conversão)
+        let hipotese;
+        const convManteve = Math.abs((isFinite(b.convGlobal) ? b.convGlobal : 0) - (isFinite(a.convGlobal) ? a.convGlobal : 0)) < 0.02;
+        if (deltaMat < 0 && Math.abs(efeitoVolume) > Math.abs(efeitoConversao) && convManteve) {
+          hipotese = `A queda veio principalmente de MENOS inscrições, com a conversão praticamente estável (${pct(a.convGlobal)} → ${pct(b.convGlobal)}). Aqui a tese de "encher o topo do funil" tem suporte: como a conversão se manteve, recuperar o volume de inscrições tende a recuperar matrículas na mesma proporção. Teste um incremento controlado de captação e confirme se a conversão segura.`;
+        } else if (deltaMat < 0 && Math.abs(efeitoConversao) >= Math.abs(efeitoVolume)) {
+          hipotese = `ATENÇÃO: a queda veio principalmente de CONVERSÃO pior, não de volume. Encher o topo do funil aqui desperdiça verba — o problema está no funil furando (${gargalo ? "etapa " + gargalo.etapa : "conversão global caiu"}). Antes de investir em mais inscrições, ataque a etapa que está vazando.`;
+        } else if (deltaMat > 0 && Math.abs(efeitoVolume) > Math.abs(efeitoConversao)) {
+          hipotese = `O crescimento veio de MAIS inscrições. Se a fonte desse volume é sustentável (não foi um pico pontual), manter o investimento de topo tende a sustentar o resultado. Confirme de qual canal veio esse volume na aba Verba.`;
+        } else if (deltaMat > 0) {
+          hipotese = `O crescimento veio de CONVERSÃO melhor, não de mais volume — o funil ficou mais eficiente. Momento favorável: com a conversão em alta, investir em topo de funil rende mais agora. Vale escalar captação enquanto a eficiência está boa.`;
+        } else {
+          hipotese = `Matrículas praticamente estáveis entre ${parRecente.de} e ${parRecente.para}. Sem sinal forte de volume nem de conversão para agir.`;
+        }
+
+        diagnosticos.push({
+          proc: p.nome, grupo, a, b, deltaMat, efeitoVolume, efeitoConversao, gargalo, hipotese,
+        });
+      });
     }
 
-    return { porCiclo, ins, nomeUni: uniSel === "__holding__" ? "Holding (todas as unidades)" : (st.unidades.find((u) => u.id === uniSel) || {}).nome };
+    // ordena: maior variação absoluta primeiro (o que mais mexeu)
+    diagnosticos.sort((x, y) => Math.abs(y.deltaMat) - Math.abs(x.deltaMat));
+
+    // resumo por grupo (self paid, FIES...) para o topo
+    const porGrupo = {};
+    diagnosticos.forEach((d) => {
+      if (!porGrupo[d.grupo]) porGrupo[d.grupo] = { matA: 0, matB: 0 };
+      porGrupo[d.grupo].matA += d.a.matric; porGrupo[d.grupo].matB += d.b.matric;
+    });
+
+    return { diagnosticos, parRecente, pares, porGrupo,
+      nomeUni: uniSel === "__holding__" ? "Holding (todas as unidades)" : (st.unidades.find((u) => u.id === uniSel) || {}).nome };
   }, [st, uniSel]);
 
   if (erro) return <div style={{ background: "#FBE9E9", color: "#9B1C1C", padding: 16, borderRadius: 8, margin: 20 }}>{erro}</div>;
   if (!st || !D) return <div style={{ color: "#4A5C57", padding: 20 }}>Carregando...</div>;
 
-  const corTipo = { padrao: "#0F5F4E", correlacao: "#2E6DA4", alerta: "#9B1C1C", positivo: "#0F5F4E", "": "#4A5C57" };
-  const bgTipo = { padrao: "#E4EFEB", correlacao: "#E8F0F7", alerta: "#FBE9E9", positivo: "#E4EFEB", "": "#F1F4F3" };
-  const rotuloTipo = { padrao: "Padrão nos dados", correlacao: "Correlação observada", alerta: "Ponto de atenção", positivo: "Sinal positivo" };
+  const corGrupo = { "Self paid": "#0F5F4E", "FIES": "#8A6100", "Transferência": "#6B4A8A", "Transferência FIES": "#6B4A8A", "Recuperado": "#2E6DA4" };
 
   return (
-    <div style={{ maxWidth: 900, margin: "0 auto" }}>
-      <div style={{ marginBottom: 16 }}>
-        <div style={eyebrow}>Leitura dos dados · Clariens</div>
-        <h1 style={titulo}>Insights e hipóteses</h1>
+    <div style={{ maxWidth: 920, margin: "0 auto" }}>
+      <div style={{ marginBottom: 14 }}>
+        <div style={eyebrow}>Diagnóstico de captação · Clariens</div>
+        <h1 style={titulo}>Diagnóstico por processo</h1>
       </div>
 
       <div style={filtros}>
@@ -99,48 +133,87 @@ export default function Insights() {
             {st.unidades.map((u) => <option key={u.id} value={u.id}>{u.nome}</option>)}
           </select>
         </div>
-        <div style={{ marginLeft: "auto", fontSize: 12, color: "#4A5C57" }}>{D.nomeUni}</div>
+        <div style={{ marginLeft: "auto", fontSize: 12, color: "#4A5C57" }}>
+          {D.parRecente ? `Comparando ${D.parRecente.de} → ${D.parRecente.para} (ciclos homólogos)` : "Sem par homólogo"}
+        </div>
       </div>
 
       <div style={aviso}>
-        Estes insights são lidos diretamente dos números que a equipe preencheu, por regras fixas e auditáveis.
-        As <b>hipóteses de ação</b> são sugestões a testar, não conclusões: correlação nos dados não prova causa.
-        A decisão é sua.
+        Diagnóstico lido dos dados, comparando ciclos homólogos (mesma entrada do ano anterior). Cada análise separa
+        o efeito <b>volume</b> (mudou o nº de inscrições) do efeito <b>conversão</b> (mudou a taxa) — porque "aumentar inscrições"
+        só vira matrícula se a conversão se mantiver. As <b>hipóteses de ação</b> são para testar, não conclusões.
       </div>
 
-      {D.ins.length === 0 && (
+      {!D.parRecente && (
         <div style={card}><div style={{ padding: 20, color: "#4A5C57", fontSize: 13 }}>
-          Ainda não há dados suficientes para gerar insights. Preencha pelo menos dois ciclos com histórico na aba Sistema.
+          Ainda não há dois ciclos homólogos preenchidos (ex: 2025.1 e 2026.1). Preencha na aba Sistema para o diagnóstico aparecer.
         </div></div>
       )}
 
-      {D.ins.map((x, i) => (
-        <div key={i} style={{ ...card, borderLeft: `4px solid ${corTipo[x.tipo]}` }}>
+      {D.diagnosticos.map((d, i) => (
+        <div key={i} style={{ ...card, borderLeft: `4px solid ${corGrupo[d.grupo] || "#4A5C57"}` }}>
           <div style={{ padding: "14px 16px" }}>
-            <span style={{ ...selo, background: bgTipo[x.tipo], color: corTipo[x.tipo] }}>{rotuloTipo[x.tipo]}</span>
-            <div style={insTitulo}>{x.titulo}</div>
-            <div style={insTexto}>{x.texto}</div>
-            <div style={hipBox}><span style={hipLbl}>Hipótese a testar</span>{x.hipotese}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <span style={{ ...selo, background: "#F1F4F3", color: corGrupo[d.grupo] || "#4A5C57" }}>{d.grupo}</span>
+              <span style={insTitulo}>{d.proc}</span>
+              <span style={{ marginLeft: "auto", fontFamily: "ui-monospace,Menlo,monospace", fontSize: 15, fontWeight: 700, color: d.deltaMat > 0 ? "#0F5F4E" : d.deltaMat < 0 ? "#9B1C1C" : "#4A5C57" }}>
+                {sgn(d.deltaMat)} matríc.
+              </span>
+            </div>
+
+            {/* Camada 1 — decomposição */}
+            <div style={sec}>
+              <div style={secTit}>1 · De onde veio a variação</div>
+              <div style={{ fontSize: 13, color: "#2A3B36", lineHeight: 1.55 }}>
+                Matrículas foram de <b>{f0(d.a.matric)}</b> ({D.parRecente.de}) para <b>{f0(d.b.matric)}</b> ({D.parRecente.para}).
+                Dessa variação de {sgn(d.deltaMat)}, cerca de <b style={{ color: Math.abs(d.efeitoVolume) >= Math.abs(d.efeitoConversao) ? "#0E1F1B" : "#4A5C57" }}>{sgn(d.efeitoVolume)}</b> veio
+                da mudança no <b>volume de inscrições</b> e <b style={{ color: Math.abs(d.efeitoConversao) > Math.abs(d.efeitoVolume) ? "#0E1F1B" : "#4A5C57" }}>{sgn(d.efeitoConversao)}</b> da
+                mudança na <b>taxa de conversão</b>.
+              </div>
+              <div style={{ display: "flex", gap: 18, marginTop: 8, fontSize: 11.5, color: "#4A5C57", fontFamily: "ui-monospace,Menlo,monospace" }}>
+                <span>Inscrições: {f0(d.a.insc)} → {f0(d.b.insc)}</span>
+                <span>Conv. global: {pct(d.a.convGlobal)} → {pct(d.b.convGlobal)}</span>
+              </div>
+            </div>
+
+            {/* Camada 2 — gargalo */}
+            {d.gargalo && (
+              <div style={sec}>
+                <div style={secTit}>2 · Onde o funil vazou</div>
+                <div style={{ fontSize: 13, color: "#2A3B36", lineHeight: 1.55 }}>
+                  A maior perda foi na etapa <b>{d.gargalo.etapa}</b>: caiu de {pct(d.gargalo.de)} para {pct(d.gargalo.para)}.
+                  É aí que a matrícula está escapando.
+                </div>
+              </div>
+            )}
+
+            {/* Camada 3 — hipótese */}
+            <div style={hipBox}>
+              <span style={hipLbl}>3 · Hipótese a testar</span>
+              {d.hipotese}
+            </div>
           </div>
         </div>
       ))}
 
-      {/* Tabela de suporte: métricas por ciclo */}
-      {D.porCiclo.length > 0 && (
+      {/* Tabela de suporte */}
+      {D.diagnosticos.length > 0 && (
         <div style={card}>
-          <div style={cardH}>Métricas por ciclo (base dos insights)</div>
+          <div style={cardH}>Suporte — {D.parRecente.de} vs {D.parRecente.para}</div>
           <div style={{ overflowX: "auto" }}>
             <table style={tbl}>
               <thead><tr>
-                <th style={thL}>Ciclo</th><th style={th}>Inscrições</th><th style={th}>Pagas</th><th style={th}>Matrículas</th>
-                <th style={th}>Taxa pagto</th><th style={th}>Paga→Mat</th><th style={th}>CAC</th>
+                <th style={thL}>Processo</th><th style={th}>Insc. {D.parRecente.de}</th><th style={th}>Insc. {D.parRecente.para}</th>
+                <th style={th}>Mat. {D.parRecente.de}</th><th style={th}>Mat. {D.parRecente.para}</th>
+                <th style={th}>Conv. {D.parRecente.de}</th><th style={th}>Conv. {D.parRecente.para}</th>
               </tr></thead>
               <tbody>
-                {D.porCiclo.map((c) => (
-                  <tr key={c.ciclo}>
-                    <td style={tdL}>{c.ciclo}</td><td style={td}>{f0(c.insc)}</td><td style={td}>{f0(c.pagas)}</td>
-                    <td style={td}>{f0(c.matric)}</td><td style={td}>{pct(c.taxaPag)}</td><td style={td}>{pct(c.conv)}</td>
-                    <td style={td}>{isFinite(c.cac) && c.cac > 0 ? brl(c.cac) : "—"}</td>
+                {D.diagnosticos.map((d, i) => (
+                  <tr key={i}>
+                    <td style={tdL}>{d.proc}</td>
+                    <td style={td}>{f0(d.a.insc)}</td><td style={td}>{f0(d.b.insc)}</td>
+                    <td style={td}>{f0(d.a.matric)}</td><td style={td}>{f0(d.b.matric)}</td>
+                    <td style={tdMut}>{pct(d.a.convGlobal)}</td><td style={tdMut}>{pct(d.b.convGlobal)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -154,20 +227,22 @@ export default function Insights() {
 
 const eyebrow = { fontSize: 11, textTransform: "uppercase", letterSpacing: ".12em", color: "#4A5C57", fontWeight: 700 };
 const titulo = { fontFamily: "Georgia,serif", fontSize: 24, color: "#0E1F1B", margin: "4px 0 0" };
-const filtros = { display: "flex", gap: 16, alignItems: "center", background: "#fff", border: "1px solid #D8E0DD", borderRadius: 8, padding: "10px 14px", marginBottom: 14 };
+const filtros = { display: "flex", gap: 16, alignItems: "center", background: "#fff", border: "1px solid #D8E0DD", borderRadius: 8, padding: "10px 14px", marginBottom: 14, flexWrap: "wrap" };
 const fld = { display: "flex", alignItems: "center", gap: 7 };
 const lbl = { fontSize: 10, textTransform: "uppercase", letterSpacing: ".08em", color: "#4A5C57", fontWeight: 700 };
 const sel = { border: "1px solid #D8E0DD", borderRadius: 4, padding: "5px 8px", fontSize: 13, background: "#fff", color: "#0E1F1B" };
-const aviso = { background: "#FBF2DC", border: "1px solid #E8D9A8", borderRadius: 6, padding: "10px 14px", fontSize: 12, color: "#6B5200", lineHeight: 1.5, marginBottom: 16 };
+const aviso = { background: "#FBF2DC", border: "1px solid #E8D9A8", borderRadius: 6, padding: "10px 14px", fontSize: 12, color: "#6B5200", lineHeight: 1.55, marginBottom: 16 };
 const card = { background: "#fff", border: "1px solid #D8E0DD", borderRadius: 8, overflow: "hidden", marginBottom: 12 };
 const cardH = { fontFamily: "Georgia,serif", fontSize: 14, padding: "12px 16px", borderBottom: "1px solid #D8E0DD", color: "#0E1F1B" };
-const selo = { display: "inline-block", fontSize: 9.5, textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 700, padding: "2px 8px", borderRadius: 10, marginBottom: 8 };
-const insTitulo = { fontFamily: "Georgia,serif", fontSize: 15, color: "#0E1F1B", marginBottom: 6 };
-const insTexto = { fontSize: 13, color: "#2A3B36", lineHeight: 1.55, marginBottom: 10 };
-const hipBox = { background: "#F6F8F8", borderRadius: 6, padding: "10px 12px", fontSize: 12.5, color: "#4A5C57", lineHeight: 1.55 };
+const selo = { display: "inline-block", fontSize: 9.5, textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 700, padding: "2px 8px", borderRadius: 10 };
+const insTitulo = { fontFamily: "Georgia,serif", fontSize: 16, color: "#0E1F1B" };
+const sec = { marginBottom: 12 };
+const secTit = { fontSize: 10, textTransform: "uppercase", letterSpacing: ".07em", color: "#0F5F4E", fontWeight: 700, marginBottom: 4 };
+const hipBox = { background: "#F6F8F8", borderRadius: 6, padding: "10px 12px", fontSize: 12.5, color: "#4A5C57", lineHeight: 1.55, borderLeft: "3px solid #E8D9A8" };
 const hipLbl = { display: "block", fontSize: 9.5, textTransform: "uppercase", letterSpacing: ".07em", color: "#8A6100", fontWeight: 700, marginBottom: 3 };
 const tbl = { width: "100%", borderCollapse: "collapse", fontSize: 12.5 };
-const th = { textAlign: "right", padding: "8px 12px", fontSize: 9.5, textTransform: "uppercase", letterSpacing: ".05em", color: "#4A5C57", fontWeight: 700, borderBottom: "1px solid #D8E0DD", background: "#FAFBFB", whiteSpace: "nowrap" };
+const th = { textAlign: "right", padding: "8px 10px", fontSize: 9.5, textTransform: "uppercase", letterSpacing: ".05em", color: "#4A5C57", fontWeight: 700, borderBottom: "1px solid #D8E0DD", background: "#FAFBFB", whiteSpace: "nowrap" };
 const thL = { ...th, textAlign: "left" };
-const td = { padding: "7px 12px", borderBottom: "1px solid #EDF1F0", textAlign: "right", fontFamily: "ui-monospace,Menlo,monospace", color: "#0E1F1B" };
+const td = { padding: "7px 10px", borderBottom: "1px solid #EDF1F0", textAlign: "right", fontFamily: "ui-monospace,Menlo,monospace", color: "#0E1F1B" };
+const tdMut = { ...td, color: "#4A5C57" };
 const tdL = { ...td, textAlign: "left", fontFamily: "inherit", fontWeight: 600 };
