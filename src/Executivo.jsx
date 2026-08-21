@@ -589,19 +589,17 @@ export default function Executivo({ modo = "executivo" }) {
             </div>
           );
         })()}
-        {uniSel === "__holding__" && (
-          <div style={{ padding: "0 16px 14px" }}>
-            <button onClick={() => setEditRev(!editRev)} style={{ fontSize: 12, padding: "5px 12px", border: "1px solid #0F5F4E", borderRadius: 5, background: editRev ? "#0F5F4E" : "#fff", color: editRev ? "#fff" : "#0F5F4E", cursor: "pointer", fontWeight: 600 }}>
-              {editRev ? "Fechar edição por praça" : "Ajustar recuperação por praça"}
-            </button>
-          </div>
-        )}
+        <div style={{ padding: "0 16px 14px" }}>
+          <button onClick={() => setEditRev(!editRev)} style={{ fontSize: 12, padding: "5px 12px", border: "1px solid #0F5F4E", borderRadius: 5, background: editRev ? "#0F5F4E" : "#fff", color: editRev ? "#fff" : "#0F5F4E", cursor: "pointer", fontWeight: 600 }}>
+            {editRev ? "Fechar edição" : (uniSel === "__holding__" ? "Ajustar recuperação por praça" : "Ajustar recuperação desta unidade")}
+          </button>
+        </div>
       </div>
 
-      {/* Grade editável de recuperação por praça: FIES cede + Transferência cresce */}
-      {editRev && uniSel === "__holding__" && (
+      {/* Grade editável de recuperação: FIES cede + Transferência cresce (Holding ou unidade) */}
+      {editRev && (
         <div style={card}>
-          <div style={cardH}>Ajuste da Recuperação Self-Paid por praça</div>
+          <div style={cardH}>Ajuste da Recuperação Self-Paid {uniSel === "__holding__" ? "por praça" : "— " + D.nomeUni}</div>
           <div style={{ padding: "10px 16px 0", fontSize: 12, color: "#4A5C57", lineHeight: 1.5 }}>
             <b>FIES cede</b>: quanto da matrícula de FIES vira vaga para o self-paid calouro (distribuída entre Vestibular, ENEM e Segunda Graduação pela proporção histórica). <b>Transf. cresce</b>: crescimento moderado da transferência. Vazio = usa o padrão (FIES cede 10%, transf. +8%). Enter salva.
           </div>
@@ -612,7 +610,7 @@ export default function Executivo({ modo = "executivo" }) {
                 <th style={th}>FIES cede (%)</th><th style={th}>Vaga liberada</th><th style={th}>Transf. cresce (%)</th>
               </tr></thead>
               <tbody>
-                {st.unidades.map((u) => {
+                {st.unidades.filter((u) => uniSel === "__holding__" || u.id === uniSel).map((u) => {
                   const mU = st.meta[`${D.alvo}|${u.id}`] || {};
                   const det = (D.detalhePraca || {})[u.id] || {};
                   const campo = (chave, placeholder) => (
