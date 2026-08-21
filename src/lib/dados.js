@@ -72,6 +72,7 @@ export async function carregarTudo() {
     const k = `${r.ciclo_alvo}|${r.unidade_id}`;
     const base = { vagas: r.vagas, matric: r.meta_matriculas, verba: r.verba };
     Object.entries(r.shares_processo || {}).forEach(([pid, v]) => (base[`sh_${pid}`] = v));
+    Object.entries(r.reversao || {}).forEach(([pid, v]) => (base[`rv_${pid}`] = v));
     Object.entries(r.shares_canal || {}).forEach(([cid, v]) => (base[`ch_${cid}`] = v));
     metaMap[k] = base;
   });
@@ -117,8 +118,15 @@ export async function salvarMeta(alvo, uniId, m, procIds, canIds) {
   const { error } = await supabase.from("metas").upsert(row, { onConflict: "unidade_id,ciclo_alvo" });
   if (error) throw error;
 }
-export async function salvarVagaCiclo(ciclo, uniId, vagas) {
-  const row = { ciclo, unidade_id: uniId, vagas: n(vagas), atualizado_em: new Date().toISOString() };
+export async function salvarReversao(alvo, uniId, procId, fatorPct) {
+  // grava o fator de reversão (em %) por praça e processo, na coluna JSON reversao da tabela metas
+  const { data } = await supabase.from("metas").select("reversao").eq("unidade_id", uniId).eq("ciclo_alvo", alvo).single();
+  const rev = (data && data.reversao) || {};
+  if (n(fatorPct) === 0) delete rev[procId]; else rev[procId] = n(fatorPct);
+  const { error } = await supabase.from("metas").upsert({ unidade_id: uniId, ciclo_alvo: alvo, reversao: rev, atualizado_em: new Date().toISOString() }, { onConflict: "unidade_id,ciclo_alvo" });
+  if (error) throw error;
+}
+export async function salvarVagaCiclo(ciclo, uniId, vagas) {  const row = { ciclo, unidade_id: uniId, vagas: n(vagas), atualizado_em: new Date().toISOString() };
   const { error } = await supabase.from("vagas_ciclo").upsert(row, { onConflict: "unidade_id,ciclo" });
   if (error) throw error;
 }
