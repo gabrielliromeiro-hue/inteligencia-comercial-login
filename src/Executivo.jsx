@@ -23,7 +23,7 @@ function funilCell(cell) {
 }
 function f0v(n) { return isFinite(n) ? Math.round(n).toLocaleString("pt-BR") : "—"; }
 
-export default function Executivo() {
+export default function Executivo({ modo = "executivo" }) {
   const [st, setSt] = useState(null);
   const [erro, setErro] = useState("");
   const [uniSel, setUniSel] = useState("__holding__");
@@ -403,9 +403,9 @@ export default function Executivo() {
       <div style={header}>
         <div>
           <div style={eyebrow}>Planejamento comercial · Clariens</div>
-          <h1 style={titulo}>Matrículas por entrada · {D.alvo}</h1>
+          <h1 style={titulo}>{modo === "funil" ? "Funil por ciclo" : "Matrículas por entrada"} · {D.alvo}</h1>
         </div>
-        <div style={cenarioTag}>Cenário {cenarioLabel}</div>
+        {modo === "executivo" && <div style={cenarioTag}>Cenário {cenarioLabel}</div>}
       </div>
 
       {/* Filtros */}
@@ -424,6 +424,8 @@ export default function Executivo() {
         <div style={{ marginLeft: "auto", fontSize: 12, color: "#4A5C57" }}>{D.nomeUni}</div>
       </div>
 
+      {/* ===== CONTEÚDO EXECUTIVO ===== */}
+      {modo === "executivo" && (<>
       {/* KPIs de topo: composição self paid x FIES + conversão global */}
       <div style={kpiGrid}>
         <div style={kpiCard}>
@@ -769,6 +771,11 @@ export default function Executivo() {
         </div>
       </div>
 
+      </>)}
+      {/* ===== FIM CONTEÚDO EXECUTIVO (parte 1) ===== */}
+
+      {/* ===== BLOCO FUNIL (aba Funil) ===== */}
+      {modo === "funil" && (<>
       {/* Visão de funil por etapa x processo */}
       <div style={card}>
         <div style={cardH}>Funil por etapa — {D.cicloHist} · {D.nomeUni}</div>
@@ -857,7 +864,11 @@ export default function Executivo() {
           </div>
         </div>
       ))}
+      </>)}
+      {/* ===== FIM BLOCO FUNIL ===== */}
 
+      {/* ===== CONTEÚDO EXECUTIVO (parte 2) ===== */}
+      {modo === "executivo" && (<>
       {/* Matriz share por periodo */}
       <div style={card}>
         <div style={cardH}>Evolução do share por processo — todos os ciclos + previsão {D.alvo}</div>
@@ -907,6 +918,8 @@ export default function Executivo() {
       <div style={rodape}>
         Dados do histórico preenchido pela equipe na aba Sistema. Previsto = projeção do modelo para {D.alvo} no cenário {cenarioLabel} ({D.cenario}%).
       </div>
+      </>)}
+      {/* ===== FIM CONTEÚDO EXECUTIVO (parte 2) ===== */}
     </div>
   );
 }
