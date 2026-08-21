@@ -327,6 +327,41 @@ export default function Executivo({ modo = "executivo" }) {
         editavel: !ehFIES(p.nome) && (ehSelfPaid(p.nome) || ehTransfer(p.nome)) };
     });
 
+    // ==== TRAVA DE VAGA: Recuperação não pode fazer o calouro (ocupa vaga) passar da vaga da praça ====
+    // Para cada praça, soma a recuperação dos processos que ocupam vaga; se > vaga, reduz proporcionalmente.
+    const travaInfo = {}; // uId -> {vaga, somaRecup, estourou, fator}
+    alvoUnis.forEach((u) => {
+      const mU = st.meta[`${cfg.alvo}|${u}`] || {};
+      const vagaU = num(mU.vagas);
+      if (vagaU <= 0) return; // sem vaga definida, não trava
+      let somaRecupVaga = 0;
+      cenariosProc.forEach((c) => {
+        if (c.p.ocupaVaga !== false) {
+          const pp = c.porPraca.find((x) => x.uId === u);
+          if (pp) somaRecupVaga += pp.rev;
+        }
+      });
+      if (somaRecupVaga > vagaU) {
+        const fator = vagaU / somaRecupVaga; // reduz tudo proporcionalmente para caber
+        cenariosProc.forEach((c) => {
+          if (c.p.ocupaVaga !== false) {
+            const pp = c.porPraca.find((x) => x.uId === u);
+            if (pp) {
+              const revAntes = pp.rev;
+              pp.revTravada = pp.rev * fator;
+              pp.travou = true;
+              // ajusta o total do processo: troca a parcela desta praça
+              c.reversao = c.reversao - revAntes + pp.revTravada;
+              pp.rev = pp.revTravada;
+            }
+          }
+        });
+        travaInfo[u] = { vaga: vagaU, somaRecup: somaRecupVaga, estourou: true, fator };
+      } else {
+        travaInfo[u] = { vaga: vagaU, somaRecup: somaRecupVaga, estourou: false, fator: 1 };
+      }
+    });
+
     // totais e por grupo
     const cenTotal = cenariosProc.reduce((a, x) => ({ asIs: a.asIs + x.asIs, tend: a.tend + x.tend, reversao: a.reversao + x.reversao }), { asIs: 0, tend: 0, reversao: 0 });
 
@@ -389,7 +424,7 @@ export default function Executivo({ modo = "executivo" }) {
       funilEtapas, funilTotal, evolFunilTotal, evolFunilPorProc, ciclosFunil,
       compUnidades, canalEsc, canalNaoEsc, cicloRefE,
       cenariosProc, cenTotal, cenPorGrupo, cicloHistAnt, temAnt, justificativas,
-      convPorPraca, melhorConv, mediaConvCal,
+      convPorPraca, melhorConv, mediaConvCal, travaInfo,
       nomeUni: uniSel === "__holding__" ? "Holding (todas as unidades)" : (st.unidades.find((u) => u.id === uniSel) || {}).nome };
   }, [st, uniSel, cicloHist]);
 
@@ -474,14 +509,14 @@ export default function Executivo({ modo = "executivo" }) {
       <div style={card}>
         <div style={cardH}>Cenários de projeção — {D.alvo} · {D.nomeUni}</div>
         <div style={{ padding: "10px 16px 0", fontSize: 12, color: "#4A5C57", lineHeight: 1.5 }}>
-          <b>Tendência</b>: projeta a direção histórica (self-paid em queda, FIES em alta). <b>As Is</b>: mantém o realizado de {D.cicloHist}. <b>Reversão</b>: recuperação moderada do self-paid e transferência sobre o As Is; FIES mantido; ENEM cresce menos (mais caro). O crescimento assume a conversão histórica de cada praça — vem de mais topo, não de melhora de funil.
+          <b>Tendência</b>: projeta a direção histórica (self-paid em queda, FIES em alta). <b>As Is</b>: mantém o realizado de {D.cicloHist} (se nada for feito). <b>Recuperação Self-Paid</b>: freia a queda e cresce de forma moderada e conservadora em Vestibular, ENEM, Segunda Graduação e Transferência, respeitando o limite de vagas. FIES mantido. O crescimento assume a conversão histórica de cada praça — vem de mais topo, não de melhora de funil.
         </div>
         <div style={{ overflowX: "auto", marginTop: 8 }}>
           <table style={tbl}>
             <thead><tr>
               <th style={{ ...th, textAlign: "left" }}>Processo</th>
-              <th style={th}>Tendência</th><th style={th}>As Is ({D.cicloHist})</th><th style={th}>Reversão</th>
-              <th style={th}>Rev. vs As Is</th><th style={th}>Topo nec. (Rev.)</th>
+              <th style={th}>Tendência</th><th style={th}>As Is ({D.cicloHist})</th><th style={th}>Recup. Self-Paid</th>
+              <th style={th}>Recup. vs As Is</th><th style={th}>Topo nec.</th>
             </tr></thead>
             <tbody>
               {D.cenariosProc.filter((x) => x.asIs > 0 || x.tend > 0).map((x) => {
@@ -511,7 +546,7 @@ export default function Executivo({ modo = "executivo" }) {
         {/* subtotais por grupo */}
         <div style={{ padding: "4px 16px 0" }}>
           <table style={tbl}>
-            <thead><tr><th style={{ ...th, textAlign: "left" }}>Grupo</th><th style={th}>Tendência</th><th style={th}>As Is</th><th style={th}>Reversão</th></tr></thead>
+            <thead><tr><th style={{ ...th, textAlign: "left" }}>Grupo</th><th style={th}>Tendência</th><th style={th}>As Is</th><th style={th}>Recup. Self-Paid</th></tr></thead>
             <tbody>
               {["Self paid", "FIES", "Transferência", "Transferência FIES", "Recuperado"].filter((gr) => D.cenPorGrupo[gr] && (D.cenPorGrupo[gr].asIs > 0 || D.cenPorGrupo[gr].tend > 0)).map((gr) => (
                 <tr key={gr}><td style={tdL}>{gr}</td>
@@ -523,12 +558,21 @@ export default function Executivo({ modo = "executivo" }) {
           </table>
         </div>
         <div style={legenda}>
-          <b>Leitura para o board:</b> a Tendência revela o risco (para onde vamos sem agir), o As Is mostra o freio da queda (manter o de {D.cicloHist}), a Reversão mostra a recuperação moderada e o esforço de topo que ela exige. "Topo nec." = inscrições necessárias na conversão histórica da praça para sustentar a matrícula da Reversão. Os % de recuperação são sugestões conservadoras (≈1/3 da queda histórica), ajustáveis por praça.
+          <b>Leitura para o board:</b> a Tendência revela o risco (para onde vamos sem agir), o As Is mostra o freio da queda (manter o de {D.cicloHist}), a Recuperação Self-Paid mostra a retomada moderada e o esforço de topo que ela exige, travada no limite de vagas. "Topo nec." = inscrições necessárias na conversão histórica da praça para sustentar a matrícula recuperada. Os % são sugestões conservadoras baseadas no histórico de cada praça, ajustáveis.
         </div>
+        {(() => {
+          const travadas = Object.entries(D.travaInfo || {}).filter(([, v]) => v.estourou).map(([uId]) => (st.unidades.find((u) => u.id === uId) || {}).nome);
+          if (travadas.length === 0) return null;
+          return (
+            <div style={{ margin: "0 16px 12px", padding: "8px 12px", background: "#FBF2DC", border: "1px solid #E8D9A8", borderRadius: 6, fontSize: 12, color: "#6B5200" }}>
+              <b>Limite de vagas atingido:</b> em {travadas.join(", ")}, a recuperação do self-paid calouro foi travada porque a soma dos processos que ocupam vaga bateria no teto de vagas da praça. O crescimento foi reduzido para caber. Para recuperar mais self-paid nessas praças, seria preciso abrir vaga (ou reduzir o espaço de outro processo que ocupa vaga).
+            </div>
+          );
+        })()}
         {uniSel === "__holding__" && (
           <div style={{ padding: "0 16px 14px" }}>
             <button onClick={() => setEditRev(!editRev)} style={{ fontSize: 12, padding: "5px 12px", border: "1px solid #0F5F4E", borderRadius: 5, background: editRev ? "#0F5F4E" : "#fff", color: editRev ? "#fff" : "#0F5F4E", cursor: "pointer", fontWeight: 600 }}>
-              {editRev ? "Fechar edição por praça" : "Ajustar % de reversão por praça"}
+              {editRev ? "Fechar edição por praça" : "Ajustar recuperação por praça"}
             </button>
           </div>
         )}
@@ -537,7 +581,7 @@ export default function Executivo({ modo = "executivo" }) {
       {/* Grade editável de reversão por praça x processo */}
       {editRev && uniSel === "__holding__" && (
         <div style={card}>
-          <div style={cardH}>Ajuste da Reversão por praça — % de crescimento sobre o As Is</div>
+          <div style={cardH}>Ajuste da Recuperação Self-Paid por praça — % sobre o As Is</div>
           <div style={{ padding: "10px 16px 0", fontSize: 12, color: "#4A5C57" }}>
             Cada campo é o % de crescimento daquele processo naquela praça. Vazio = usa a sugestão automática (≈1/3 da queda). Digite 0 para congelar no As Is. Enter salva.
           </div>
@@ -582,7 +626,7 @@ export default function Executivo({ modo = "executivo" }) {
       {/* Justificativas por praça (regras) */}
       {D.justificativas && D.justificativas.length > 0 && (
         <div style={card}>
-          <div style={cardH}>Justificativa da Reversão por praça</div>
+          <div style={cardH}>Justificativa da Recuperação Self-Paid por praça</div>
           <div style={{ padding: "12px 16px" }}>
             {D.justificativas.map((j, i) => (
               <div key={i} style={{ marginBottom: 14 }}>
