@@ -72,7 +72,7 @@ export async function carregarTudo() {
     const k = `${r.ciclo_alvo}|${r.unidade_id}`;
     const base = { vagas: r.vagas, matric: r.meta_matriculas, verba: r.verba };
     Object.entries(r.shares_processo || {}).forEach(([pid, v]) => (base[`sh_${pid}`] = v));
-    Object.entries(r.reversao || {}).forEach(([pid, v]) => (base[`rv_${pid}`] = v));
+    Object.entries(r.reversao || {}).forEach(([chave, v]) => { base[chave.startsWith("rv_") ? chave : `rv_${chave}`] = v; });
     Object.entries(r.shares_canal || {}).forEach(([cid, v]) => (base[`ch_${cid}`] = v));
     metaMap[k] = base;
   });
