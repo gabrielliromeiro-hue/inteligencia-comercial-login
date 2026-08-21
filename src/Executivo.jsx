@@ -1,13 +1,10 @@
 import React, { useState, useEffect, useMemo } from "react";
 import * as E from "./lib/engine-core.js";
 import { carregarTudo, salvarReversao } from "./lib/dados.js";
+import { f0, brl, brlK, div, num } from "./lib/format.js";
 
-const f0 = (n) => (isFinite(n) ? Math.round(n).toLocaleString("pt-BR") : "—");
+// pct local mantém default 0 casas (comportamento histórico desta tela)
 const pct = (n, d = 0) => (isFinite(n) ? (n * 100).toLocaleString("pt-BR", { minimumFractionDigits: d, maximumFractionDigits: d }) + "%" : "—");
-const brl = (n) => (isFinite(n) ? "R$ " + Math.round(n).toLocaleString("pt-BR") : "—");
-const brlK = (n) => { if (!isFinite(n)) return "—"; if (Math.abs(n) >= 1e6) return "R$ " + (n / 1e6).toLocaleString("pt-BR", { maximumFractionDigits: 2 }) + " mi"; if (Math.abs(n) >= 1e3) return "R$ " + (n / 1e3).toLocaleString("pt-BR", { maximumFractionDigits: 0 }) + " mil"; return brl(n); };
-const div = E.safeDiv;
-const num = E.parseNum;
 const PALETA = ["#0F5F4E", "#2E8B72", "#5AAD95", "#8A6100", "#B08A3E", "#4A5C57", "#7D8F89"];
 
 // célula do funil: número + cor + seta comparando ao ciclo homólogo

@@ -1,14 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
-import * as E from "./lib/engine-core.js";
 import { carregarTudo } from "./lib/dados.js";
-
-const f0 = (n) => (isFinite(n) ? Math.round(n).toLocaleString("pt-BR") : "—");
-const f1 = (n) => (isFinite(n) ? n.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : "—");
-const pct = (n, d = 1) => (isFinite(n) ? (n * 100).toLocaleString("pt-BR", { minimumFractionDigits: d, maximumFractionDigits: d }) + "%" : "—");
-const sgn = (n) => (n > 0 ? "+" : "") + f0(n);
-const brl = (n) => (isFinite(n) ? "R$ " + Math.round(n).toLocaleString("pt-BR") : "—");
-const div = E.safeDiv;
-const num = E.parseNum;
+import { f0, f1, pct, sgn, brl, div, num } from "./lib/format.js";
 
 // grupo de processo (mesma regra da Executiva)
 const grupoDe = (nome) => {

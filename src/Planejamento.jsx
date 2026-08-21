@@ -1,14 +1,10 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import * as E from "./lib/engine-core.js";
 import { carregarTudo, salvarFunil, salvarCanal, salvarMeta, updCanal, salvarVagaCiclo, salvarCanalProcesso } from "./lib/dados.js";
+import { f0, f1, pct, brl, div, num } from "./lib/format.js";
 
-const f0 = (n) => (isFinite(n) ? Math.round(n).toLocaleString("pt-BR") : "—");
-const f1 = (n) => (isFinite(n) ? n.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : "—");
-const pct = (n, d = 1) => (isFinite(n) ? (n * 100).toLocaleString("pt-BR", { minimumFractionDigits: d, maximumFractionDigits: d }) + "%" : "—");
-const brl = (n) => (isFinite(n) ? "R$ " + Math.round(n).toLocaleString("pt-BR") : "—");
+// brlK local mantém o formato "M"/"k" (diferente do "mi"/"mil" das outras telas)
 const brlK = (n) => { if (!isFinite(n)) return "—"; if (Math.abs(n) >= 1e6) return "R$ " + (n / 1e6).toLocaleString("pt-BR", { maximumFractionDigits: 2 }) + "M"; if (Math.abs(n) >= 1e3) return "R$ " + (n / 1e3).toLocaleString("pt-BR", { maximumFractionDigits: 0 }) + "k"; return brl(n); };
-const div = E.safeDiv;
-const num = E.parseNum;
 
 export default function Planejamento({ podeEditar }) {
   const [st, setSt] = useState(null);
