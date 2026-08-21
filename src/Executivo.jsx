@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import * as E from "./lib/engine-core.js";
-import { carregarTudo } from "./lib/dados.js";
+import { carregarTudo, salvarReversao } from "./lib/dados.js";
 
 const f0 = (n) => (isFinite(n) ? Math.round(n).toLocaleString("pt-BR") : "—");
 const pct = (n, d = 0) => (isFinite(n) ? (n * 100).toLocaleString("pt-BR", { minimumFractionDigits: d, maximumFractionDigits: d }) + "%" : "—");
@@ -28,6 +28,7 @@ export default function Executivo() {
   const [erro, setErro] = useState("");
   const [uniSel, setUniSel] = useState("__holding__");
   const [cicloHist, setCicloHist] = useState("");
+  const [editRev, setEditRev] = useState(false); // mostra a grade de edição por praça
 
   useEffect(() => { carregarTudo().then((d) => {
     setSt(d);
@@ -270,12 +271,100 @@ export default function Executivo() {
     const canalEsc = canalEfic.filter((x) => x.escalavel).sort((a, b) => (a.cacProj || 1e18) - (b.cacProj || 1e18));
     const canalNaoEsc = canalEfic.filter((x) => !x.escalavel).sort((a, b) => (a.cacProj || 1e18) - (b.cacProj || 1e18));
 
+    // ==== 3 CENÁRIOS DE PROJEÇÃO (Tendência · As Is · Reversão) ====
+    // ciclo homólogo anterior ao cicloHist, para medir a queda histórica por processo
+    const semH = String(cicloHist).split(".")[1];
+    const anoH = Number(String(cicloHist).split(".")[0]);
+    const cicloHistAnt = (anoH - 1) + "." + semH; // homólogo do ciclo As Is
+    const temAnt = st.ciclos.includes(cicloHistAnt);
+    // classificação de processo para a Reversão
+    const ehSelfPaid = (nome) => grupoDe(nome) === "Self paid";
+    const ehENEM = (nome) => (nome || "").toLowerCase().includes("enem");
+    const ehTransfer = (nome) => grupoDe(nome).startsWith("Transfer");
+    const ehFIES = (nome) => grupoDe(nome) === "FIES";
+
+    // justificativa por regras (por praça) para os processos editáveis da Reversão
+
+    const cenariosProc = st.processos.map((p) => {
+      // As Is = matrícula realizada no cicloHist (somando praças selecionadas)
+      let asIs = 0, insc0 = 0, mat0 = 0;
+      alvoUnis.forEach((u) => {
+        asIs += g(st.funil, `${cicloHist}|${u}|${p.id}`, "matric");
+        insc0 += g(st.funil, `${cicloHist}|${u}|${p.id}`, "insc");
+        mat0 += g(st.funil, `${cicloHist}|${u}|${p.id}`, "matric");
+      });
+
+      const tend = projAgg[p.id] || 0;
+      const convIM = insc0 > 0 ? mat0 / insc0 : NaN;
+
+      // Reversão: calculada PRAÇA A PRAÇA (cada uma com seu fator), depois somada
+      let reversao = 0, inscRev = 0, mexeAlguma = false;
+      const porPraca = [];
+      alvoUnis.forEach((u) => {
+        const asIsU = g(st.funil, `${cicloHist}|${u}|${p.id}`, "matric");
+        const inscU = g(st.funil, `${cicloHist}|${u}|${p.id}`, "insc");
+        const convU = inscU > 0 ? asIsU / inscU : NaN;
+        // homólogo anterior da praça (para medir queda)
+        let matAntU = 0;
+        if (temAnt) matAntU = g(st.funil, `${cicloHistAnt}|${u}|${p.id}`, "matric");
+        const quedaU = matAntU > 0 ? (matAntU - asIsU) / matAntU : 0;
+        // sugestão: 1/3 da queda; ENEM metade; FIES 0
+        let fatSug = 0;
+        if (ehFIES(p.nome)) fatSug = 0;
+        else if (ehSelfPaid(p.nome) || ehTransfer(p.nome)) { const base13 = quedaU > 0 ? quedaU / 3 : 0; fatSug = ehENEM(p.nome) ? base13 * 0.5 : base13; }
+        // override por praça (gravado em meta da praça, rv_<pid>)
+        const mU = st.meta[`${cfg.alvo}|${u}`] || {};
+        const ovU = num(mU[`rv_${p.id}`]);
+        const fatU = isFinite(ovU) && ovU !== 0 ? ovU / 100 : fatSug;
+        const revU = asIsU * (1 + fatU);
+        reversao += revU;
+        if (isFinite(convU) && convU > 0) inscRev += revU / convU;
+        if (fatU > 0) mexeAlguma = true;
+        porPraca.push({ uId: u, nome: (st.unidades.find((x) => x.id === u) || {}).nome, asIs: asIsU, queda: quedaU, matAnt: matAntU, fatSug, fatU, rev: revU, conv: convU });
+      });
+
+      return { p, grupo: grupoDe(p.nome), asIs, tend, reversao, inscRev, convIM, mexeRev: mexeAlguma, porPraca,
+        editavel: !ehFIES(p.nome) && (ehSelfPaid(p.nome) || ehTransfer(p.nome)) };
+    });
+
+    // totais e por grupo
+    const cenTotal = cenariosProc.reduce((a, x) => ({ asIs: a.asIs + x.asIs, tend: a.tend + x.tend, reversao: a.reversao + x.reversao }), { asIs: 0, tend: 0, reversao: 0 });
+
+    // JUSTIFICATIVAS por regra, por praça (só processos editáveis que crescem)
+    const justificativas = [];
+    if (uniSel === "__holding__") {
+      // agrupa por praça: para cada unidade, os processos que crescem na Reversão
+      st.unidades.filter((u) => alvoUnis.includes(u.id)).forEach((u) => {
+        const itens = [];
+        cenariosProc.filter((c) => c.editavel).forEach((c) => {
+          const pp = c.porPraca.find((x) => x.uId === u.id);
+          if (pp && pp.fatU > 0 && pp.asIs > 0) {
+            const cresc = pp.rev - pp.asIs;
+            const enem = ehENEM(c.p.nome);
+            let txt = `${c.p.nome}: +${(pp.fatU * 100).toFixed(1)}% (${f0(pp.asIs)} → ${f0(pp.rev)} matríc.). `;
+            if (pp.queda > 0.01) txt += `A praça caiu ${(pp.queda * 100).toFixed(0)}% vs ${cicloHistAnt}; a projeção recupera cerca de 1/3 dessa queda. `;
+            else txt += `Sem queda homóloga relevante; crescimento conservador aplicado. `;
+            if (enem) txt += `Fator reduzido por ser ENEM (maior custo de aquisição). `;
+            if (isFinite(pp.conv) && pp.conv > 0) txt += `Exige ~${f0(cresc / pp.conv)} inscrições adicionais na conversão histórica de ${(pp.conv * 100).toFixed(1)}%.`;
+            itens.push(txt);
+          }
+        });
+        if (itens.length) justificativas.push({ praca: u.nome, itens });
+      });
+    }
+    const cenPorGrupo = {};
+    cenariosProc.forEach((x) => {
+      if (!cenPorGrupo[x.grupo]) cenPorGrupo[x.grupo] = { asIs: 0, tend: 0, reversao: 0 };
+      cenPorGrupo[x.grupo].asIs += x.asIs; cenPorGrupo[x.grupo].tend += x.tend; cenPorGrupo[x.grupo].reversao += x.reversao;
+    });
+
     return { linhas, histTotal, projTotal, metaTotal, metaHist, matrizShare, ciclosHistoricos, alvo: cfg.alvo, cenario: cfg.cenario, cicloHist,
       projSelfPaid, projFies, projTransf, projTransfFies, projRecuperado,
       histSelfPaid, histFies, histTransf, histTransfFies, histRecuperado,
       convGlobalHist, cacHist, cpiHist, previsaoInscritos, vagasTot, projOcupaVaga, projNaoOcupa,
       funilEtapas, funilTotal, evolFunilTotal, evolFunilPorProc, ciclosFunil,
       compUnidades, canalEsc, canalNaoEsc, cicloRefE,
+      cenariosProc, cenTotal, cenPorGrupo, cicloHistAnt, temAnt, justificativas,
       nomeUni: uniSel === "__holding__" ? "Holding (todas as unidades)" : (st.unidades.find((u) => u.id === uniSel) || {}).nome };
   }, [st, uniSel, cicloHist]);
 
@@ -353,6 +442,131 @@ export default function Executivo() {
           <div style={kpiSub}>{D.vagasTot > 0 ? "vaga = meta · exclui transf. e recuperado" : "defina vagas na aba Sistema"}</div>
         </div>
       </div>
+
+      {/* 3 CENÁRIOS DE PROJEÇÃO */}
+      <div style={card}>
+        <div style={cardH}>Cenários de projeção — {D.alvo} · {D.nomeUni}</div>
+        <div style={{ padding: "10px 16px 0", fontSize: 12, color: "#4A5C57", lineHeight: 1.5 }}>
+          <b>Tendência</b>: projeta a direção histórica (self-paid em queda, FIES em alta). <b>As Is</b>: mantém o realizado de {D.cicloHist}. <b>Reversão</b>: recuperação moderada do self-paid e transferência sobre o As Is; FIES mantido; ENEM cresce menos (mais caro). O crescimento assume a conversão histórica de cada praça — vem de mais topo, não de melhora de funil.
+        </div>
+        <div style={{ overflowX: "auto", marginTop: 8 }}>
+          <table style={tbl}>
+            <thead><tr>
+              <th style={{ ...th, textAlign: "left" }}>Processo</th>
+              <th style={th}>Tendência</th><th style={th}>As Is ({D.cicloHist})</th><th style={th}>Reversão</th>
+              <th style={th}>Rev. vs As Is</th><th style={th}>Topo nec. (Rev.)</th>
+            </tr></thead>
+            <tbody>
+              {D.cenariosProc.filter((x) => x.asIs > 0 || x.tend > 0).map((x) => {
+                const dRev = x.reversao - x.asIs;
+                return (
+                  <tr key={x.p.id}>
+                    <td style={tdL}>{x.p.nome}{x.grupo === "FIES" && <span style={{ fontSize: 9, color: "#8A6100", marginLeft: 6 }}>congelado</span>}</td>
+                    <td style={td}>{f0(x.tend)}</td>
+                    <td style={td}>{f0(x.asIs)}</td>
+                    <td style={{ ...td, fontWeight: 700, color: "#0F5F4E" }}>{f0(x.reversao)}</td>
+                    <td style={{ ...td, color: dRev > 0.5 ? "#0F5F4E" : "#4A5C57" }}>{dRev > 0.5 ? "+" + f0(dRev) : "—"}</td>
+                    <td style={tdMut}>{x.mexeRev && isFinite(x.inscRev) ? f0(x.inscRev) + " insc." : "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr><td style={{ ...tdL, fontWeight: 700 }}>Total</td>
+                <td style={{ ...td, fontWeight: 700 }}>{f0(D.cenTotal.tend)}</td>
+                <td style={{ ...td, fontWeight: 700 }}>{f0(D.cenTotal.asIs)}</td>
+                <td style={{ ...td, fontWeight: 700, color: "#0F5F4E" }}>{f0(D.cenTotal.reversao)}</td>
+                <td style={{ ...td, fontWeight: 700 }}>{D.cenTotal.reversao - D.cenTotal.asIs > 0.5 ? "+" + f0(D.cenTotal.reversao - D.cenTotal.asIs) : "—"}</td>
+                <td></td></tr>
+            </tfoot>
+          </table>
+        </div>
+        {/* subtotais por grupo */}
+        <div style={{ padding: "4px 16px 0" }}>
+          <table style={tbl}>
+            <thead><tr><th style={{ ...th, textAlign: "left" }}>Grupo</th><th style={th}>Tendência</th><th style={th}>As Is</th><th style={th}>Reversão</th></tr></thead>
+            <tbody>
+              {["Self paid", "FIES", "Transferência", "Transferência FIES", "Recuperado"].filter((gr) => D.cenPorGrupo[gr] && (D.cenPorGrupo[gr].asIs > 0 || D.cenPorGrupo[gr].tend > 0)).map((gr) => (
+                <tr key={gr}><td style={tdL}>{gr}</td>
+                  <td style={td}>{f0(D.cenPorGrupo[gr].tend)}</td>
+                  <td style={td}>{f0(D.cenPorGrupo[gr].asIs)}</td>
+                  <td style={{ ...td, color: "#0F5F4E" }}>{f0(D.cenPorGrupo[gr].reversao)}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div style={legenda}>
+          <b>Leitura para o board:</b> a Tendência revela o risco (para onde vamos sem agir), o As Is mostra o freio da queda (manter o de {D.cicloHist}), a Reversão mostra a recuperação moderada e o esforço de topo que ela exige. "Topo nec." = inscrições necessárias na conversão histórica da praça para sustentar a matrícula da Reversão. Os % de recuperação são sugestões conservadoras (≈1/3 da queda histórica), ajustáveis por praça.
+        </div>
+        {uniSel === "__holding__" && (
+          <div style={{ padding: "0 16px 14px" }}>
+            <button onClick={() => setEditRev(!editRev)} style={{ fontSize: 12, padding: "5px 12px", border: "1px solid #0F5F4E", borderRadius: 5, background: editRev ? "#0F5F4E" : "#fff", color: editRev ? "#fff" : "#0F5F4E", cursor: "pointer", fontWeight: 600 }}>
+              {editRev ? "Fechar edição por praça" : "Ajustar % de reversão por praça"}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Grade editável de reversão por praça x processo */}
+      {editRev && uniSel === "__holding__" && (
+        <div style={card}>
+          <div style={cardH}>Ajuste da Reversão por praça — % de crescimento sobre o As Is</div>
+          <div style={{ padding: "10px 16px 0", fontSize: 12, color: "#4A5C57" }}>
+            Cada campo é o % de crescimento daquele processo naquela praça. Vazio = usa a sugestão automática (≈1/3 da queda). Digite 0 para congelar no As Is. Enter salva.
+          </div>
+          <div style={{ overflowX: "auto", marginTop: 8 }}>
+            <table style={tbl}>
+              <thead><tr>
+                <th style={{ ...th, textAlign: "left" }}>Praça</th>
+                {D.cenariosProc.filter((c) => c.editavel).map((c) => <th key={c.p.id} style={th}>{c.p.nome}</th>)}
+              </tr></thead>
+              <tbody>
+                {st.unidades.map((u) => (
+                  <tr key={u.id}>
+                    <td style={tdL}>{u.nome}</td>
+                    {D.cenariosProc.filter((c) => c.editavel).map((c) => {
+                      const pp = c.porPraca.find((x) => x.uId === u.id);
+                      if (!pp || pp.asIs === 0) return <td key={c.p.id} style={tdMut}>—</td>;
+                      const mU = st.meta[`${D.alvo}|${u.id}`] || {};
+                      const val = mU[`rv_${c.p.id}`];
+                      return (
+                        <td key={c.p.id} style={td}>
+                          <input defaultValue={val !== undefined ? val : ""} placeholder={(pp.fatSug * 100).toFixed(1)}
+                            style={{ width: 54, border: "1px solid #D8E0DD", borderRadius: 4, padding: "3px 5px", fontSize: 12, textAlign: "right", fontFamily: "ui-monospace,monospace" }}
+                            inputMode="decimal"
+                            onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
+                            onBlur={(e) => {
+                              const nv = e.target.value === "" ? 0 : num(e.target.value);
+                              setSt((s) => { const k = `${D.alvo}|${u.id}`; const meta = { ...(s.meta[k] || {}) }; if (e.target.value === "") delete meta[`rv_${c.p.id}`]; else meta[`rv_${c.p.id}`] = nv; return { ...s, meta: { ...s.meta, [k]: meta } }; });
+                              salvarReversao(D.alvo, u.id, c.p.id, nv).catch(() => {});
+                            }} />
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={legenda}>O placeholder cinza é a sugestão automática daquela praça (1/3 da queda; metade para ENEM). Ao salvar, o quadro de cenários acima recalcula.</div>
+        </div>
+      )}
+
+      {/* Justificativas por praça (regras) */}
+      {D.justificativas && D.justificativas.length > 0 && (
+        <div style={card}>
+          <div style={cardH}>Justificativa da Reversão por praça</div>
+          <div style={{ padding: "12px 16px" }}>
+            {D.justificativas.map((j, i) => (
+              <div key={i} style={{ marginBottom: 14 }}>
+                <div style={{ fontWeight: 700, color: "#0E1F1B", fontSize: 13, marginBottom: 4 }}>{j.praca}</div>
+                {j.itens.map((it, k) => <div key={k} style={{ fontSize: 12.5, color: "#4A5C57", lineHeight: 1.5, marginBottom: 3, paddingLeft: 10, borderLeft: "2px solid #E8D9A8" }}>{it}</div>)}
+              </div>
+            ))}
+          </div>
+          <div style={legenda}>Texto gerado por regras a partir do diagnóstico (queda homóloga, conversão histórica, esforço de topo). Edite antes de levar ao board — é um rascunho de defesa, não um texto final.</div>
+        </div>
+      )}
 
       {/* Comparação entre unidades (só faz sentido na holding) */}
       {uniSel === "__holding__" && D.compUnidades.length > 1 && (
