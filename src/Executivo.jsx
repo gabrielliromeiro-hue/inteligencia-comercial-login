@@ -330,6 +330,30 @@ export default function Executivo() {
     // totais e por grupo
     const cenTotal = cenariosProc.reduce((a, x) => ({ asIs: a.asIs + x.asIs, tend: a.tend + x.tend, reversao: a.reversao + x.reversao }), { asIs: 0, tend: 0, reversao: 0 });
 
+    // ==== CONVERSÃO POR PRAÇA (self-paid calouro vs transferência) ====
+    // calouro = self-paid que ocupa vaga (Vestibular, ENEM, Agendado) — NÃO inclui transferência
+    const ehCalouro = (nome) => ehSelfPaid(nome) && !ehTransfer(nome);
+    const convPorPraca = st.unidades.filter((u) => alvoUnis.includes(u.id)).map((u) => {
+      // agrega calouro no cicloHist
+      let cInsc = 0, cPag = 0, cMat = 0, tInsc = 0, tPag = 0, tMat = 0;
+      st.processos.forEach((p) => {
+        const k = `${cicloHist}|${u.id}|${p.id}`;
+        const insc = g(st.funil, k, "insc"), pag = g(st.funil, k, "pagas"), mat = g(st.funil, k, "matric");
+        if (ehCalouro(p.nome)) { cInsc += insc; cPag += pag; cMat += mat; }
+        else if (ehTransfer(p.nome)) { tInsc += insc; tPag += pag; tMat += mat; }
+      });
+      return {
+        u, cInsc, cPag, cMat, tInsc, tPag, tMat,
+        convCalouro: div(cMat, cInsc),          // global calouro insc->mat
+        taxaPagCal: div(cPag, cInsc),            // insc->pago
+        pagMatCal: div(cMat, cPag),              // pago->matrícula
+        convTransf: div(tMat, tInsc),
+      };
+    }).filter((x) => x.cInsc > 0 || x.cMat > 0);
+    // melhor conversão de calouro (para destacar o gap)
+    const melhorConv = convPorPraca.reduce((m, x) => (isFinite(x.convCalouro) && x.convCalouro > m ? x.convCalouro : m), 0);
+    const mediaConvCal = (() => { const vs = convPorPraca.map((x) => x.convCalouro).filter((v) => isFinite(v)); return vs.length ? vs.reduce((a, b) => a + b, 0) / vs.length : NaN; })();
+
     // JUSTIFICATIVAS por regra, por praça (só processos editáveis que crescem)
     const justificativas = [];
     if (uniSel === "__holding__") {
@@ -365,6 +389,7 @@ export default function Executivo() {
       funilEtapas, funilTotal, evolFunilTotal, evolFunilPorProc, ciclosFunil,
       compUnidades, canalEsc, canalNaoEsc, cicloRefE,
       cenariosProc, cenTotal, cenPorGrupo, cicloHistAnt, temAnt, justificativas,
+      convPorPraca, melhorConv, mediaConvCal,
       nomeUni: uniSel === "__holding__" ? "Holding (todas as unidades)" : (st.unidades.find((u) => u.id === uniSel) || {}).nome };
   }, [st, uniSel, cicloHist]);
 
@@ -565,6 +590,46 @@ export default function Executivo() {
             ))}
           </div>
           <div style={legenda}>Texto gerado por regras a partir do diagnóstico (queda homóloga, conversão histórica, esforço de topo). Edite antes de levar ao board — é um rascunho de defesa, não um texto final.</div>
+        </div>
+      )}
+
+      {/* Conversão por praça (self-paid calouro vs transferência) */}
+      {D.convPorPraca && D.convPorPraca.length > 0 && (
+        <div style={card}>
+          <div style={cardH}>Conversão por praça — {D.cicloHist} · self-paid calouro vs transferência</div>
+          <div style={{ padding: "10px 16px 0", fontSize: 12, color: "#4A5C57", lineHeight: 1.5 }}>
+            <b>Calouro</b> = Vestibular + ENEM + Agendado (self-paid que ocupa vaga). <b>Transferência</b> é self-paid mas não é calouro, então aparece à parte. A conversão global do calouro é comparável entre praças — o gap mostra quem sabe converter o mesmo tráfego.
+          </div>
+          <div style={{ overflowX: "auto", marginTop: 8 }}>
+            <table style={tbl}>
+              <thead><tr>
+                <th style={{ ...th, textAlign: "left" }}>Praça</th>
+                <th style={th}>Insc. calouro</th><th style={th}>Insc→pago</th><th style={th}>Pago→matríc.</th>
+                <th style={th}>Conv. calouro</th><th style={th}>vs melhor</th><th style={th}>Conv. transf.</th>
+              </tr></thead>
+              <tbody>
+                {D.convPorPraca.slice().sort((a, b) => (b.convCalouro || 0) - (a.convCalouro || 0)).map((x) => {
+                  const ehMelhor = isFinite(x.convCalouro) && Math.abs(x.convCalouro - D.melhorConv) < 1e-9;
+                  const gap = isFinite(x.convCalouro) && D.melhorConv > 0 ? x.convCalouro / D.melhorConv - 1 : null;
+                  return (
+                    <tr key={x.u.id}>
+                      <td style={tdL}>{ehMelhor && <span style={{ color: "#0F5F4E", fontWeight: 700, marginRight: 5 }}>★</span>}{x.u.nome}</td>
+                      <td style={td}>{f0(x.cInsc)}</td>
+                      <td style={tdMut}>{pct(x.taxaPagCal, 0)}</td>
+                      <td style={tdMut}>{pct(x.pagMatCal, 1)}</td>
+                      <td style={{ ...td, fontWeight: 700, color: ehMelhor ? "#0F5F4E" : "#0E1F1B" }}>{pct(x.convCalouro, 1)}</td>
+                      <td style={{ ...td, color: gap !== null && gap < -0.001 ? "#9B1C1C" : "#4A5C57" }}>{ehMelhor ? "—" : (gap !== null ? pct(gap, 0) : "—")}</td>
+                      <td style={tdMut}>{isFinite(x.convTransf) ? pct(x.convTransf, 1) : "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot><tr><td style={{ ...tdL, fontWeight: 700 }}>Média calouro</td><td colSpan={3}></td><td style={{ ...td, fontWeight: 700 }}>{pct(D.mediaConvCal, 1)}</td><td colSpan={2}></td></tr></tfoot>
+            </table>
+          </div>
+          <div style={legenda}>
+            ★ = melhor conversão de calouro. A coluna "vs melhor" mostra o quanto cada praça está abaixo da líder. <b>Insight:</b> se a diferença for grande, o ganho não está em mais verba — está em levar a conversão das praças fracas ao nível da melhor. Convém investigar o que a líder faz de diferente no funil (atendimento, tempo de resposta, oferta na inscrição).
+          </div>
         </div>
       )}
 
