@@ -361,7 +361,7 @@ export default function Executivo({ modo = "executivo" }) {
       const inscRev = pp.reduce((a, x) => a + (x.inscNec || 0), 0);
       return { p: b.p, grupo: grupoDe(b.p.nome), asIs: b.asIs, tend: b.tend, reversao: rec,
         inscRev, porPraca: pp, mexeRev: Math.abs(rec - b.asIs) > 0.5,
-        editavel: ehCalouroSP(b.p) || ehTransfer(b.p) || ehFIES(b.p.nome) };
+        editavel: ehCalouroSP(b.p) || ehTransfer(b.p.nome) || ehFIES(b.p.nome) };
     });
 
     // ==== TRAVA DE VAGA: soma dos que ocupam vaga não passa da vaga da praça ====
