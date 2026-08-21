@@ -277,89 +277,109 @@ export default function Executivo({ modo = "executivo" }) {
     const anoH = Number(String(cicloHist).split(".")[0]);
     const cicloHistAnt = (anoH - 1) + "." + semH; // homólogo do ciclo As Is
     const temAnt = st.ciclos.includes(cicloHistAnt);
-    // classificação de processo para a Reversão
+    // classificação de processo
     const ehSelfPaid = (nome) => grupoDe(nome) === "Self paid";
     const ehENEM = (nome) => (nome || "").toLowerCase().includes("enem");
     const ehTransfer = (nome) => grupoDe(nome).startsWith("Transfer");
     const ehFIES = (nome) => grupoDe(nome) === "FIES";
+    // calouro self-paid que ocupa vaga: Vestibular, Agendado, ENEM, Segunda Graduação (NÃO FIES, NÃO transferência)
+    const ehCalouroSP = (p) => p.ocupaVaga !== false && ehSelfPaid(p.nome) && !ehTransfer(p.nome);
 
-    // justificativa por regras (por praça) para os processos editáveis da Reversão
-
-    const cenariosProc = st.processos.map((p) => {
-      // As Is = matrícula realizada no cicloHist (somando praças selecionadas)
-      let asIs = 0, insc0 = 0, mat0 = 0;
-      alvoUnis.forEach((u) => {
-        asIs += g(st.funil, `${cicloHist}|${u}|${p.id}`, "matric");
-        insc0 += g(st.funil, `${cicloHist}|${u}|${p.id}`, "insc");
-        mat0 += g(st.funil, `${cicloHist}|${u}|${p.id}`, "matric");
+    // conversão ponderada dos 2 últimos intakes homólogos (peso maior no recente): 0.65 / 0.35
+    const ciclosHomAll = st.ciclos.filter((c) => c.split(".")[1] === semH && c <= cicloHist).sort().reverse();
+    const conv2ultimos = (uId, pid) => {
+      const cs = ciclosHomAll.slice(0, 2); // [mais recente, anterior]
+      const pesos = [0.65, 0.35];
+      let numr = 0, den = 0;
+      cs.forEach((c, i) => {
+        const insc = g(st.funil, `${c}|${uId}|${pid}`, "insc");
+        const mat = g(st.funil, `${c}|${uId}|${pid}`, "matric");
+        if (insc > 0) { numr += pesos[i] * (mat / insc); den += pesos[i]; }
       });
+      return den > 0 ? numr / den : NaN;
+    };
 
-      const tend = projAgg[p.id] || 0;
-      const convIM = insc0 > 0 ? mat0 / insc0 : NaN;
-
-      // Reversão: calculada PRAÇA A PRAÇA (cada uma com seu fator), depois somada
-      let reversao = 0, inscRev = 0, mexeAlguma = false;
-      const porPraca = [];
-      alvoUnis.forEach((u) => {
-        const asIsU = g(st.funil, `${cicloHist}|${u}|${p.id}`, "matric");
-        const inscU = g(st.funil, `${cicloHist}|${u}|${p.id}`, "insc");
-        const convU = inscU > 0 ? asIsU / inscU : NaN;
-        // homólogo anterior da praça (para medir queda)
-        let matAntU = 0;
-        if (temAnt) matAntU = g(st.funil, `${cicloHistAnt}|${u}|${p.id}`, "matric");
-        const quedaU = matAntU > 0 ? (matAntU - asIsU) / matAntU : 0;
-        // sugestão: 1/3 da queda; ENEM metade; FIES 0
-        let fatSug = 0;
-        if (ehFIES(p.nome)) fatSug = 0;
-        else if (ehSelfPaid(p.nome) || ehTransfer(p.nome)) { const base13 = quedaU > 0 ? quedaU / 3 : 0; fatSug = ehENEM(p.nome) ? base13 * 0.5 : base13; }
-        // override por praça (gravado em meta da praça, rv_<pid>)
-        const mU = st.meta[`${cfg.alvo}|${u}`] || {};
-        const ovU = num(mU[`rv_${p.id}`]);
-        const fatU = isFinite(ovU) && ovU !== 0 ? ovU / 100 : fatSug;
-        const revU = asIsU * (1 + fatU);
-        reversao += revU;
-        if (isFinite(convU) && convU > 0) inscRev += revU / convU;
-        if (fatU > 0) mexeAlguma = true;
-        porPraca.push({ uId: u, nome: (st.unidades.find((x) => x.id === u) || {}).nome, asIs: asIsU, queda: quedaU, matAnt: matAntU, fatSug, fatU, rev: revU, conv: convU });
-      });
-
-      return { p, grupo: grupoDe(p.nome), asIs, tend, reversao, inscRev, convIM, mexeRev: mexeAlguma, porPraca,
-        editavel: !ehFIES(p.nome) && (ehSelfPaid(p.nome) || ehTransfer(p.nome)) };
+    // As Is e Tendência por processo (base)
+    const baseProc = st.processos.map((p) => {
+      let asIs = 0;
+      alvoUnis.forEach((u) => { asIs += g(st.funil, `${cicloHist}|${u}|${p.id}`, "matric"); });
+      return { p, asIs, tend: projAgg[p.id] || 0 };
     });
 
-    // ==== TRAVA DE VAGA: Recuperação não pode fazer o calouro (ocupa vaga) passar da vaga da praça ====
-    // Para cada praça, soma a recuperação dos processos que ocupam vaga; se > vaga, reduz proporcionalmente.
-    const travaInfo = {}; // uId -> {vaga, somaRecup, estourou, fator}
+    // ==== RECUPERAÇÃO SELF-PAID: FIES cede vaga, self-paid e transferência crescem ====
+    // Cálculo POR PRAÇA. Overrides editáveis (em meta da praça):
+    //   rv_fies_ced = % que o FIES cede (padrão 10)
+    //   rv_transf   = % de crescimento da transferência (padrão 8)
+    const FIES_CEDE_PADRAO = 10, TRANSF_CRESCE_PADRAO = 8;
+    const recupPorProc = {}; // pid -> total recuperado (holding/filtro)
+    st.processos.forEach((p) => (recupPorProc[p.id] = 0));
+    const detalhePraca = {}; // uId -> {vagaLiberada, fiesCedePct, ...}
+    const porPracaProc = {}; // pid -> [{uId, asIs, rev, conv, inscNec}]
+    st.processos.forEach((p) => (porPracaProc[p.id] = []));
+
+    alvoUnis.forEach((u) => {
+      const mU = st.meta[`${cfg.alvo}|${u}`] || {};
+      // matrículas As Is por processo nesta praça
+      const asIsProc = {};
+      st.processos.forEach((p) => { asIsProc[p.id] = g(st.funil, `${cicloHist}|${u}|${p.id}`, "matric"); });
+      // FIES cede X%
+      const fiesProc = st.processos.find((p) => ehFIES(p.nome));
+      const fiesAsIs = fiesProc ? asIsProc[fiesProc.id] : 0;
+      const fiesCedePct = (() => { const ov = num(mU.rv_fies_ced); return ov !== 0 && isFinite(ov) ? ov : FIES_CEDE_PADRAO; })();
+      const vagaLiberada = fiesAsIs * (fiesCedePct / 100);
+      // proporção histórica dos calouros self-paid (para distribuir a vaga liberada)
+      const calouros = st.processos.filter(ehCalouroSP);
+      const somaCalAsIs = calouros.reduce((a, p) => a + asIsProc[p.id], 0);
+      // aplica por processo
+      st.processos.forEach((p) => {
+        const asIsU = asIsProc[p.id];
+        let revU = asIsU; // default: mantém As Is
+        if (ehCalouroSP(p)) {
+          // recebe parte da vaga liberada pela proporção histórica
+          const prop = somaCalAsIs > 0 ? asIsU / somaCalAsIs : (calouros.length ? 1 / calouros.length : 0);
+          revU = asIsU + vagaLiberada * prop;
+        } else if (ehFIES(p.nome)) {
+          revU = fiesAsIs - vagaLiberada; // FIES cede
+        } else if (ehTransfer(p.nome)) {
+          const ovT = num(mU.rv_transf);
+          const tPct = ovT !== 0 && isFinite(ovT) ? ovT : TRANSF_CRESCE_PADRAO;
+          revU = asIsU * (1 + tPct / 100); // transferência cresce
+        }
+        recupPorProc[p.id] += revU;
+        const conv = conv2ultimos(u, p.id);
+        const deltaMat = revU - asIsU;
+        const inscNec = deltaMat > 0 && isFinite(conv) && conv > 0 ? deltaMat / conv : 0;
+        porPracaProc[p.id].push({ uId: u, nome: (st.unidades.find((x) => x.id === u) || {}).nome, asIs: asIsU, rev: revU, conv, inscNec, deltaMat });
+      });
+      detalhePraca[u] = { vagaLiberada, fiesCedePct, fiesAsIs };
+    });
+
+    // monta cenariosProc no formato usado pela tela
+    const cenariosProc = baseProc.map((b) => {
+      const rec = recupPorProc[b.p.id] || 0;
+      const pp = porPracaProc[b.p.id] || [];
+      const inscRev = pp.reduce((a, x) => a + (x.inscNec || 0), 0);
+      return { p: b.p, grupo: grupoDe(b.p.nome), asIs: b.asIs, tend: b.tend, reversao: rec,
+        inscRev, porPraca: pp, mexeRev: Math.abs(rec - b.asIs) > 0.5,
+        editavel: ehCalouroSP(b.p) || ehTransfer(b.p) || ehFIES(b.p.nome) };
+    });
+
+    // ==== TRAVA DE VAGA: soma dos que ocupam vaga não passa da vaga da praça ====
+    const travaInfo = {};
     alvoUnis.forEach((u) => {
       const mU = st.meta[`${cfg.alvo}|${u}`] || {};
       const vagaU = num(mU.vagas);
-      if (vagaU <= 0) return; // sem vaga definida, não trava
-      let somaRecupVaga = 0;
-      cenariosProc.forEach((c) => {
-        if (c.p.ocupaVaga !== false) {
-          const pp = c.porPraca.find((x) => x.uId === u);
-          if (pp) somaRecupVaga += pp.rev;
-        }
-      });
-      if (somaRecupVaga > vagaU) {
-        const fator = vagaU / somaRecupVaga; // reduz tudo proporcionalmente para caber
+      if (vagaU <= 0) return;
+      let somaVaga = 0;
+      cenariosProc.forEach((c) => { if (c.p.ocupaVaga !== false) { const pp = c.porPraca.find((x) => x.uId === u); if (pp) somaVaga += pp.rev; } });
+      if (somaVaga > vagaU + 0.5) {
+        const fator = vagaU / somaVaga;
         cenariosProc.forEach((c) => {
-          if (c.p.ocupaVaga !== false) {
-            const pp = c.porPraca.find((x) => x.uId === u);
-            if (pp) {
-              const revAntes = pp.rev;
-              pp.revTravada = pp.rev * fator;
-              pp.travou = true;
-              // ajusta o total do processo: troca a parcela desta praça
-              c.reversao = c.reversao - revAntes + pp.revTravada;
-              pp.rev = pp.revTravada;
-            }
-          }
+          if (c.p.ocupaVaga !== false) { const pp = c.porPraca.find((x) => x.uId === u);
+            if (pp) { const antes = pp.rev; pp.rev = pp.rev * fator; pp.travou = true; c.reversao = c.reversao - antes + pp.rev; } }
         });
-        travaInfo[u] = { vaga: vagaU, somaRecup: somaRecupVaga, estourou: true, fator };
-      } else {
-        travaInfo[u] = { vaga: vagaU, somaRecup: somaRecupVaga, estourou: false, fator: 1 };
-      }
+        travaInfo[u] = { vaga: vagaU, somaRecup: somaVaga, estourou: true, fator };
+      } else travaInfo[u] = { vaga: vagaU, somaRecup: somaVaga, estourou: false, fator: 1 };
     });
 
     // totais e por grupo
@@ -392,19 +412,19 @@ export default function Executivo({ modo = "executivo" }) {
     // JUSTIFICATIVAS por regra, por praça (só processos editáveis que crescem)
     const justificativas = [];
     if (uniSel === "__holding__") {
-      // agrupa por praça: para cada unidade, os processos que crescem na Reversão
       st.unidades.filter((u) => alvoUnis.includes(u.id)).forEach((u) => {
+        const det = detalhePraca[u.id];
+        if (!det || det.vagaLiberada < 0.5) return;
         const itens = [];
-        cenariosProc.filter((c) => c.editavel).forEach((c) => {
+        // linha-mãe: quanto o FIES cedeu
+        itens.push(`FIES cede ${det.fiesCedePct.toFixed(0)}% (${f0(det.fiesAsIs)} → ${f0(det.fiesAsIs - det.vagaLiberada)} matríc.), liberando ~${f0(det.vagaLiberada)} vagas para o self-paid calouro.`);
+        // por processo self-paid que cresce
+        cenariosProc.filter((c) => (ehCalouroSP(c.p) || ehTransfer(c.p.nome))).forEach((c) => {
           const pp = c.porPraca.find((x) => x.uId === u.id);
-          if (pp && pp.fatU > 0 && pp.asIs > 0) {
-            const cresc = pp.rev - pp.asIs;
-            const enem = ehENEM(c.p.nome);
-            let txt = `${c.p.nome}: +${(pp.fatU * 100).toFixed(1)}% (${f0(pp.asIs)} → ${f0(pp.rev)} matríc.). `;
-            if (pp.queda > 0.01) txt += `A praça caiu ${(pp.queda * 100).toFixed(0)}% vs ${cicloHistAnt}; a projeção recupera cerca de 1/3 dessa queda. `;
-            else txt += `Sem queda homóloga relevante; crescimento conservador aplicado. `;
-            if (enem) txt += `Fator reduzido por ser ENEM (maior custo de aquisição). `;
-            if (isFinite(pp.conv) && pp.conv > 0) txt += `Exige ~${f0(cresc / pp.conv)} inscrições adicionais na conversão histórica de ${(pp.conv * 100).toFixed(1)}%.`;
+          if (pp && pp.deltaMat > 0.5) {
+            let txt = `${c.p.nome}: ${f0(pp.asIs)} → ${f0(pp.rev)} (+${f0(pp.deltaMat)}). `;
+            if (isFinite(pp.conv) && pp.conv > 0) txt += `Exige ~${f0(pp.inscNec)} inscrições adicionais na conversão de ${(pp.conv * 100).toFixed(1)}% (média ponderada dos 2 últimos intakes).`;
+            else txt += `Sem base de conversão recente para estimar o topo necessário.`;
             itens.push(txt);
           }
         });
@@ -424,7 +444,7 @@ export default function Executivo({ modo = "executivo" }) {
       funilEtapas, funilTotal, evolFunilTotal, evolFunilPorProc, ciclosFunil,
       compUnidades, canalEsc, canalNaoEsc, cicloRefE,
       cenariosProc, cenTotal, cenPorGrupo, cicloHistAnt, temAnt, justificativas,
-      convPorPraca, melhorConv, mediaConvCal, travaInfo,
+      convPorPraca, melhorConv, mediaConvCal, travaInfo, detalhePraca,
       nomeUni: uniSel === "__holding__" ? "Holding (todas as unidades)" : (st.unidades.find((u) => u.id === uniSel) || {}).nome };
   }, [st, uniSel, cicloHist]);
 
@@ -578,48 +598,47 @@ export default function Executivo({ modo = "executivo" }) {
         )}
       </div>
 
-      {/* Grade editável de reversão por praça x processo */}
+      {/* Grade editável de recuperação por praça: FIES cede + Transferência cresce */}
       {editRev && uniSel === "__holding__" && (
         <div style={card}>
-          <div style={cardH}>Ajuste da Recuperação Self-Paid por praça — % sobre o As Is</div>
-          <div style={{ padding: "10px 16px 0", fontSize: 12, color: "#4A5C57" }}>
-            Cada campo é o % de crescimento daquele processo naquela praça. Vazio = usa a sugestão automática (≈1/3 da queda). Digite 0 para congelar no As Is. Enter salva.
+          <div style={cardH}>Ajuste da Recuperação Self-Paid por praça</div>
+          <div style={{ padding: "10px 16px 0", fontSize: 12, color: "#4A5C57", lineHeight: 1.5 }}>
+            <b>FIES cede</b>: quanto da matrícula de FIES vira vaga para o self-paid calouro (distribuída entre Vestibular, ENEM e Segunda Graduação pela proporção histórica). <b>Transf. cresce</b>: crescimento moderado da transferência. Vazio = usa o padrão (FIES cede 10%, transf. +8%). Enter salva.
           </div>
           <div style={{ overflowX: "auto", marginTop: 8 }}>
             <table style={tbl}>
               <thead><tr>
                 <th style={{ ...th, textAlign: "left" }}>Praça</th>
-                {D.cenariosProc.filter((c) => c.editavel).map((c) => <th key={c.p.id} style={th}>{c.p.nome}</th>)}
+                <th style={th}>FIES cede (%)</th><th style={th}>Vaga liberada</th><th style={th}>Transf. cresce (%)</th>
               </tr></thead>
               <tbody>
-                {st.unidades.map((u) => (
-                  <tr key={u.id}>
-                    <td style={tdL}>{u.nome}</td>
-                    {D.cenariosProc.filter((c) => c.editavel).map((c) => {
-                      const pp = c.porPraca.find((x) => x.uId === u.id);
-                      if (!pp || pp.asIs === 0) return <td key={c.p.id} style={tdMut}>—</td>;
-                      const mU = st.meta[`${D.alvo}|${u.id}`] || {};
-                      const val = mU[`rv_${c.p.id}`];
-                      return (
-                        <td key={c.p.id} style={td}>
-                          <input defaultValue={val !== undefined ? val : ""} placeholder={(pp.fatSug * 100).toFixed(1)}
-                            style={{ width: 54, border: "1px solid #D8E0DD", borderRadius: 4, padding: "3px 5px", fontSize: 12, textAlign: "right", fontFamily: "ui-monospace,monospace" }}
-                            inputMode="decimal"
-                            onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
-                            onBlur={(e) => {
-                              const nv = e.target.value === "" ? 0 : num(e.target.value);
-                              setSt((s) => { const k = `${D.alvo}|${u.id}`; const meta = { ...(s.meta[k] || {}) }; if (e.target.value === "") delete meta[`rv_${c.p.id}`]; else meta[`rv_${c.p.id}`] = nv; return { ...s, meta: { ...s.meta, [k]: meta } }; });
-                              salvarReversao(D.alvo, u.id, c.p.id, nv).catch(() => {});
-                            }} />
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
+                {st.unidades.map((u) => {
+                  const mU = st.meta[`${D.alvo}|${u.id}`] || {};
+                  const det = (D.detalhePraca || {})[u.id] || {};
+                  const campo = (chave, placeholder) => (
+                    <input defaultValue={mU[chave] !== undefined ? mU[chave] : ""} placeholder={placeholder}
+                      style={{ width: 56, border: "1px solid #D8E0DD", borderRadius: 4, padding: "3px 5px", fontSize: 12, textAlign: "right", fontFamily: "ui-monospace,monospace" }}
+                      inputMode="decimal"
+                      onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
+                      onBlur={(e) => {
+                        const nv = e.target.value === "" ? 0 : num(e.target.value);
+                        setSt((s) => { const k = `${D.alvo}|${u.id}`; const meta = { ...(s.meta[k] || {}) }; if (e.target.value === "") delete meta[chave]; else meta[chave] = nv; return { ...s, meta: { ...s.meta, [k]: meta } }; });
+                        salvarReversao(D.alvo, u.id, chave, nv).catch(() => {});
+                      }} />
+                  );
+                  return (
+                    <tr key={u.id}>
+                      <td style={tdL}>{u.nome}</td>
+                      <td style={td}>{campo("rv_fies_ced", "10")}</td>
+                      <td style={tdMut}>{det.vagaLiberada > 0 ? "~" + f0(det.vagaLiberada) : "—"}</td>
+                      <td style={td}>{campo("rv_transf", "8")}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
-          <div style={legenda}>O placeholder cinza é a sugestão automática daquela praça (1/3 da queda; metade para ENEM). Ao salvar, o quadro de cenários acima recalcula.</div>
+          <div style={legenda}>Ao salvar, o quadro de cenários recalcula. A vaga liberada pelo FIES é redistribuída ao self-paid; se a soma dos que ocupam vaga passar do teto da praça, a trava reduz proporcionalmente.</div>
         </div>
       )}
 
