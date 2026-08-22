@@ -1,4 +1,4 @@
-// VERSAO-FIX-TRAVA-V2 (recuperação sem trava de vaga)
+// VERSAO-SOMA-ZERO-V3 (self-paid puxa, FIES compensa, transf independente)
 import React, { useState, useEffect, useMemo } from "react";
 import * as E from "./lib/engine-core.js";
 import { carregarTudo, salvarReversao } from "./lib/dados.js";
@@ -304,14 +304,14 @@ export default function Executivo({ modo = "executivo" }) {
       return { p, asIs, tend: projAgg[p.id] || 0 };
     });
 
-    // ==== RECUPERAÇÃO SELF-PAID (por praça) ====
-    // O FIES cede uma % (rv_fies_ced, padrão 10) das suas matrículas; essa vaga vira
-    // self-paid calouro, distribuída entre Vestibular/ENEM/Segunda Graduação pela
-    // proporção histórica. A transferência cresce rv_transf% (padrão 8). Como o FIES
-    // cede exatamente o que o calouro recebe, a soma de quem ocupa vaga não aumenta —
-    // não há estouro de vaga, logo não há trava (era ela que anulava o efeito).
-    const FIES_CEDE_PADRAO = 10, TRANSF_PADRAO = 8;
-    const pctOverride = (raw, padrao) => { const v = num(raw); return isFinite(v) && v !== 0 ? v : padrao; };
+    // ==== RECUPERAÇÃO SELF-PAID (por praça) — mecânica soma-zero ====
+    // Cada processo self-paid calouro (Vestibular, ENEM, Segunda Graduação) cresce uma %
+    // editável sobre o As Is (rv_<processo>, padrão 0 = sem crescimento). Tudo que o calouro
+    // ganha em matrículas é subtraído do FIES (a vaga é fixa: o que entra de self-paid sai de
+    // FIES). A Transferência cresce rv_transf% (padrão 8) de forma independente, sem tocar no
+    // FIES (transferência não ocupa vaga de calouro).
+    const TRANSF_PADRAO = 8;
+    const pctVal = (raw, padrao) => { const v = num(raw); return isFinite(v) && v !== 0 ? v : padrao; };
 
     const recupPorProc = {};
     const porPracaProc = {};
@@ -323,31 +323,33 @@ export default function Executivo({ modo = "executivo" }) {
       const asIsU = {};
       st.processos.forEach((p) => (asIsU[p.id] = g(st.funil, `${cicloHist}|${u}|${p.id}`, "matric")));
 
+      // 1) self-paid calouro cresce a % editável de cada um; soma o ganho total
+      let ganhoCalouro = 0;
+      const revU = {};
+      st.processos.forEach((p) => {
+        revU[p.id] = asIsU[p.id];
+        if (ehCalouroSP(p)) {
+          const cresc = pctVal(mU[`rv_${p.id}`], 0) / 100; // padrão 0 = sem crescimento
+          revU[p.id] = asIsU[p.id] * (1 + cresc);
+          ganhoCalouro += revU[p.id] - asIsU[p.id];
+        }
+      });
+      // 2) FIES compensa: cai exatamente o que o calouro ganhou (soma zero)
       const fiesP = st.processos.find((p) => ehFIES(p.nome));
-      const fiesAsIs = fiesP ? asIsU[fiesP.id] : 0;
-      const vagaLiberada = fiesAsIs * (pctOverride(mU.rv_fies_ced, FIES_CEDE_PADRAO) / 100);
-
-      const calouros = st.processos.filter(ehCalouroSP);
-      const somaCal = calouros.reduce((a, p) => a + asIsU[p.id], 0);
+      if (fiesP) revU[fiesP.id] = asIsU[fiesP.id] - ganhoCalouro;
+      // 3) transferência cresce independente (não mexe no FIES)
+      st.processos.forEach((p) => {
+        if (ehTransfer(p.nome)) revU[p.id] = asIsU[p.id] * (1 + pctVal(mU.rv_transf, TRANSF_PADRAO) / 100);
+      });
 
       st.processos.forEach((p) => {
-        const base = asIsU[p.id];
-        let rev = base;
-        if (ehCalouroSP(p)) {
-          const prop = somaCal > 0 ? base / somaCal : (calouros.length ? 1 / calouros.length : 0);
-          rev = base + vagaLiberada * prop;
-        } else if (ehFIES(p.nome)) {
-          rev = fiesAsIs - vagaLiberada;
-        } else if (ehTransfer(p.nome)) {
-          rev = base * (1 + pctOverride(mU.rv_transf, TRANSF_PADRAO) / 100);
-        }
-        recupPorProc[p.id] += rev;
+        recupPorProc[p.id] += revU[p.id];
         const conv = conv2ultimos(u, p.id);
-        const delta = rev - base;
-        porPracaProc[p.id].push({ uId: u, asIs: base, rev, conv, deltaMat: delta,
+        const delta = revU[p.id] - asIsU[p.id];
+        porPracaProc[p.id].push({ uId: u, asIs: asIsU[p.id], rev: revU[p.id], conv, deltaMat: delta,
           inscNec: delta > 0 && isFinite(conv) && conv > 0 ? delta / conv : 0 });
       });
-      detalhePraca[u] = { vagaLiberada, fiesAsIs, fiesCedePct: pctOverride(mU.rv_fies_ced, FIES_CEDE_PADRAO) };
+      detalhePraca[u] = { ganhoCalouro, fiesAsIs: fiesP ? asIsU[fiesP.id] : 0 };
     });
 
     const cenariosProc = baseProc.map((b) => {
@@ -356,9 +358,9 @@ export default function Executivo({ modo = "executivo" }) {
         reversao: recupPorProc[b.p.id] || 0, porPraca: pp,
         inscRev: pp.reduce((a, x) => a + (x.inscNec || 0), 0),
         mexeRev: Math.abs((recupPorProc[b.p.id] || 0) - b.asIs) > 0.5,
-        editavel: ehCalouroSP(b.p) || ehTransfer(b.p.nome) || ehFIES(b.p.nome) };
+        editavel: ehCalouroSP(b.p) || ehTransfer(b.p.nome) };
     });
-    const travaInfo = {}; // trava removida: a mecânica FIES→self-paid conserva a soma de vaga
+    const travaInfo = {}; // soma-zero conserva a vaga, sem trava
 
     // totais e por grupo
     const cenTotal = cenariosProc.reduce((a, x) => ({ asIs: a.asIs + x.asIs, tend: a.tend + x.tend, reversao: a.reversao + x.reversao }), { asIs: 0, tend: 0, reversao: 0 });
@@ -525,7 +527,7 @@ export default function Executivo({ modo = "executivo" }) {
                     <td style={td}>{f0(x.tend)}</td>
                     <td style={td}>{f0(x.asIs)}</td>
                     <td style={{ ...td, fontWeight: 700, color: "#0F5F4E" }}>{f0(x.reversao)}</td>
-                    <td style={{ ...td, color: dRev > 0.5 ? "#0F5F4E" : "#4A5C57" }}>{dRev > 0.5 ? "+" + f0(dRev) : "—"}</td>
+                    <td style={{ ...td, color: dRev > 0.5 ? "#0F5F4E" : (dRev < -0.5 ? "#9B1C1C" : "#4A5C57") }}>{Math.abs(dRev) > 0.5 ? (dRev > 0 ? "+" : "−") + f0(Math.abs(dRev)) : "—"}</td>
                     <td style={tdMut}>{x.mexeRev && isFinite(x.inscRev) ? f0(x.inscRev) + " insc." : "—"}</td>
                   </tr>
                 );
@@ -565,18 +567,20 @@ export default function Executivo({ modo = "executivo" }) {
         </div>
       </div>
 
-      {/* Grade editável de recuperação: FIES cede + Transferência cresce (Holding ou unidade) */}
+      {/* Grade editável de recuperação: % por processo self-paid + transferência */}
       {editRev && (
         <div style={card}>
           <div style={cardH}>Ajuste da Recuperação Self-Paid {uniSel === "__holding__" ? "por praça" : "— " + D.nomeUni}</div>
           <div style={{ padding: "10px 16px 0", fontSize: 12, color: "#4A5C57", lineHeight: 1.5 }}>
-            <b>FIES cede</b>: quanto da matrícula de FIES vira vaga para o self-paid calouro (distribuída entre Vestibular, ENEM e Segunda Graduação pela proporção histórica). <b>Transf. cresce</b>: crescimento moderado da transferência. Vazio = usa o padrão (FIES cede 10%, transf. +8%). Enter salva.
+            Digite a <b>% de crescimento sobre o As Is</b> de cada processo self-paid calouro. O ganho em matrículas é <b>subtraído do FIES</b> automaticamente (a vaga é fixa). A <b>Transferência</b> cresce à parte, sem tocar no FIES. Vazio = sem crescimento. Enter salva.
           </div>
           <div style={{ overflowX: "auto", marginTop: 8 }}>
             <table style={tbl}>
               <thead><tr>
                 <th style={{ ...th, textAlign: "left" }}>Praça</th>
-                <th style={th}>FIES cede (%)</th><th style={th}>Vaga liberada</th><th style={th}>Transf. cresce (%)</th>
+                {D.cenariosProc.filter((c) => c.grupo === "Self paid" && !c.p.nome.toLowerCase().includes("transfer")).map((c) => <th key={c.p.id} style={th}>{c.p.nome} (%)</th>)}
+                <th style={th}>Transf. (%)</th>
+                <th style={th}>FIES resultante</th>
               </tr></thead>
               <tbody>
                 {st.unidades.filter((u) => uniSel === "__holding__" || u.id === uniSel).map((u) => {
@@ -584,7 +588,7 @@ export default function Executivo({ modo = "executivo" }) {
                   const det = (D.detalhePraca || {})[u.id] || {};
                   const campo = (chave, placeholder) => (
                     <input defaultValue={mU[chave] !== undefined ? mU[chave] : ""} placeholder={placeholder}
-                      style={{ width: 56, border: "1px solid #D8E0DD", borderRadius: 4, padding: "3px 5px", fontSize: 12, textAlign: "right", fontFamily: "ui-monospace,monospace" }}
+                      style={{ width: 52, border: "1px solid #D8E0DD", borderRadius: 4, padding: "3px 5px", fontSize: 12, textAlign: "right", fontFamily: "ui-monospace,monospace" }}
                       inputMode="decimal"
                       onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
                       onBlur={(e) => {
@@ -593,19 +597,20 @@ export default function Executivo({ modo = "executivo" }) {
                         salvarReversao(D.alvo, u.id, chave, nv).catch(() => {});
                       }} />
                   );
+                  const fiesResultante = det.fiesAsIs != null ? det.fiesAsIs - (det.ganhoCalouro || 0) : null;
                   return (
                     <tr key={u.id}>
                       <td style={tdL}>{u.nome}</td>
-                      <td style={td}>{campo("rv_fies_ced", "10")}</td>
-                      <td style={tdMut}>{det.vagaLiberada > 0 ? "~" + f0(det.vagaLiberada) : "—"}</td>
+                      {D.cenariosProc.filter((c) => c.grupo === "Self paid" && !c.p.nome.toLowerCase().includes("transfer")).map((c) => <td key={c.p.id} style={td}>{campo(`rv_${c.p.id}`, "0")}</td>)}
                       <td style={td}>{campo("rv_transf", "8")}</td>
+                      <td style={{ ...tdMut, color: (det.ganhoCalouro || 0) > 0.5 ? "#9B1C1C" : "#4A5C57" }}>{fiesResultante != null ? f0(fiesResultante) : "—"}</td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
           </div>
-          <div style={legenda}>Ao salvar, o quadro de cenários recalcula. A vaga liberada pelo FIES é redistribuída ao self-paid; se a soma dos que ocupam vaga passar do teto da praça, a trava reduz proporcionalmente.</div>
+          <div style={legenda}>Ao salvar, o quadro de cenários recalcula na hora. A coluna "FIES resultante" mostra o FIES após ceder as matrículas que o self-paid ganhou.</div>
         </div>
       )}
 
