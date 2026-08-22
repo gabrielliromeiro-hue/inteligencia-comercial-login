@@ -1,4 +1,4 @@
-// VERSAO-GRUPO-FIX-V6 (classificadores de grupo corrigidos)
+// VERSAO-SUBTOTAL-VAGA-V7 (subtotal ocupam-vaga vs transferência)
 import React, { useState, useEffect, useMemo } from "react";
 import * as E from "./lib/engine-core.js";
 import { carregarTudo, salvarReversao } from "./lib/dados.js";
@@ -423,13 +423,22 @@ export default function Executivo({ modo = "executivo" }) {
       cenPorGrupo[x.grupo].asIs += x.asIs; cenPorGrupo[x.grupo].tend += x.tend; cenPorGrupo[x.grupo].reversao += x.reversao;
     });
 
+    // subtotais: quem OCUPA VAGA (Vest, Agendado, ENEM, Seg.Grad, FIES) conta na vaga;
+    // transferência projeta à parte (não ocupa vaga da praça)
+    const zero = () => ({ asIs: 0, tend: 0, reversao: 0 });
+    const subOcupaVaga = zero(), subTransf = zero();
+    cenariosProc.forEach((x) => {
+      const alvo = x.p.ocupaVaga !== false ? subOcupaVaga : subTransf;
+      alvo.asIs += x.asIs; alvo.tend += x.tend; alvo.reversao += x.reversao;
+    });
+
     return { linhas, histTotal, projTotal, metaTotal, metaHist, matrizShare, ciclosHistoricos, alvo: cfg.alvo, cenario: cfg.cenario, cicloHist,
       projSelfPaid, projFies, projTransf, projTransfFies, projRecuperado,
       histSelfPaid, histFies, histTransf, histTransfFies, histRecuperado,
       convGlobalHist, cacHist, cpiHist, previsaoInscritos, vagasTot, projOcupaVaga, projNaoOcupa,
       funilEtapas, funilTotal, evolFunilTotal, evolFunilPorProc, ciclosFunil,
       compUnidades, canalEsc, canalNaoEsc, cicloRefE,
-      cenariosProc, cenTotal, cenPorGrupo, cicloHistAnt, temAnt, justificativas,
+      cenariosProc, cenTotal, cenPorGrupo, subOcupaVaga, subTransf, cicloHistAnt, temAnt, justificativas,
       convPorPraca, melhorConv, mediaConvCal, travaInfo, detalhePraca,
       nomeUni: uniSel === "__holding__" ? "Holding (todas as unidades)" : (st.unidades.find((u) => u.id === uniSel) || {}).nome };
   }, [st, uniSel, cicloHist]);
@@ -525,42 +534,61 @@ export default function Executivo({ modo = "executivo" }) {
               <th style={th}>Recup. vs As Is</th><th style={th}>Topo nec.</th>
             </tr></thead>
             <tbody>
-              {D.cenariosProc.filter((x) => x.asIs > 0 || x.tend > 0).map((x) => {
-                const dRev = x.reversao - x.asIs;
-                // editável inline só quando uma unidade específica está selecionada
-                const editavelInline = uniSel !== "__holding__" && (ehGrupoEditavel(x.grupo));
-                const chaveEdit = x.grupo === "transf" ? "rv_transf" : `rv_${x.p.id}`;
+              {(() => {
                 const mUsel = uniSel !== "__holding__" ? (st.meta[`${D.alvo}|${uniSel}`] || {}) : {};
-                return (
-                  <tr key={x.p.id}>
-                    <td style={tdL}>{x.p.nome}{x.grupo === "fies" && <span style={{ fontSize: 9, color: "#8A6100", marginLeft: 6 }}>compensa</span>}</td>
-                    <td style={td}>{f0(x.tend)}</td>
-                    <td style={td}>{f0(x.asIs)}</td>
-                    <td style={{ ...td, fontWeight: 700, color: "#0F5F4E" }}>{f0(x.reversao)}</td>
-                    <td style={{ ...td, color: dRev > 0.5 ? "#0F5F4E" : (dRev < -0.5 ? "#9B1C1C" : "#4A5C57") }}>
-                      {editavelInline ? (
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
-                          <input defaultValue={mUsel[chaveEdit] !== undefined ? mUsel[chaveEdit] : ""} placeholder="0"
-                            style={{ width: 44, border: "1px solid #B7D8CE", borderRadius: 4, padding: "2px 4px", fontSize: 11.5, textAlign: "right", fontFamily: "ui-monospace,monospace" }}
-                            inputMode="decimal"
-                            onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
-                            onBlur={(e) => {
-                              const nv = e.target.value === "" ? 0 : num(e.target.value);
-                              setSt((s) => { const k = `${D.alvo}|${uniSel}`; const meta = { ...(s.meta[k] || {}) }; if (e.target.value === "") delete meta[chaveEdit]; else meta[chaveEdit] = nv; return { ...s, meta: { ...s.meta, [k]: meta } }; });
-                              salvarReversao(D.alvo, uniSel, chaveEdit, nv).catch(() => {});
-                            }} />
-                          <span style={{ fontSize: 10, color: "#4A5C57" }}>%</span>
-                          <span style={{ minWidth: 34, textAlign: "right" }}>{Math.abs(dRev) > 0.5 ? (dRev > 0 ? "+" : "−") + f0(Math.abs(dRev)) : ""}</span>
-                        </span>
-                      ) : (Math.abs(dRev) > 0.5 ? (dRev > 0 ? "+" : "−") + f0(Math.abs(dRev)) : "—")}
-                    </td>
-                    <td style={tdMut}>{x.mexeRev && isFinite(x.inscRev) ? f0(x.inscRev) + " insc." : "—"}</td>
+                const renderLinha = (x) => {
+                  const dRev = x.reversao - x.asIs;
+                  const editavelInline = uniSel !== "__holding__" && ehGrupoEditavel(x.grupo);
+                  const chaveEdit = x.grupo === "transf" ? "rv_transf" : `rv_${x.p.id}`;
+                  return (
+                    <tr key={x.p.id}>
+                      <td style={tdL}>{x.p.nome}{x.grupo === "fies" && <span style={{ fontSize: 9, color: "#8A6100", marginLeft: 6 }}>compensa</span>}</td>
+                      <td style={td}>{f0(x.tend)}</td>
+                      <td style={td}>{f0(x.asIs)}</td>
+                      <td style={{ ...td, fontWeight: 700, color: "#0F5F4E" }}>{f0(x.reversao)}</td>
+                      <td style={{ ...td, color: dRev > 0.5 ? "#0F5F4E" : (dRev < -0.5 ? "#9B1C1C" : "#4A5C57") }}>
+                        {editavelInline ? (
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
+                            <input defaultValue={mUsel[chaveEdit] !== undefined ? mUsel[chaveEdit] : ""} placeholder="0"
+                              style={{ width: 44, border: "1px solid #B7D8CE", borderRadius: 4, padding: "2px 4px", fontSize: 11.5, textAlign: "right", fontFamily: "ui-monospace,monospace" }}
+                              inputMode="decimal"
+                              onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
+                              onBlur={(e) => {
+                                const nv = e.target.value === "" ? 0 : num(e.target.value);
+                                setSt((s) => { const k = `${D.alvo}|${uniSel}`; const meta = { ...(s.meta[k] || {}) }; if (e.target.value === "") delete meta[chaveEdit]; else meta[chaveEdit] = nv; return { ...s, meta: { ...s.meta, [k]: meta } }; });
+                                salvarReversao(D.alvo, uniSel, chaveEdit, nv).catch(() => {});
+                              }} />
+                            <span style={{ fontSize: 10, color: "#4A5C57" }}>%</span>
+                            <span style={{ minWidth: 34, textAlign: "right" }}>{Math.abs(dRev) > 0.5 ? (dRev > 0 ? "+" : "−") + f0(Math.abs(dRev)) : ""}</span>
+                          </span>
+                        ) : (Math.abs(dRev) > 0.5 ? (dRev > 0 ? "+" : "−") + f0(Math.abs(dRev)) : "—")}
+                      </td>
+                      <td style={tdMut}>{x.mexeRev && isFinite(x.inscRev) ? f0(x.inscRev) + " insc." : "—"}</td>
+                    </tr>
+                  );
+                };
+                const visiveis = D.cenariosProc.filter((x) => x.asIs > 0 || x.tend > 0);
+                const ocupam = visiveis.filter((x) => x.p.ocupaVaga !== false);
+                const transf = visiveis.filter((x) => x.p.ocupaVaga === false);
+                const linhaSub = (rot, s, cor) => (
+                  <tr key={rot} style={{ background: "#F4F7F6" }}>
+                    <td style={{ ...tdL, fontWeight: 700, color: cor }}>{rot}</td>
+                    <td style={{ ...td, fontWeight: 700 }}>{f0(s.tend)}</td>
+                    <td style={{ ...td, fontWeight: 700 }}>{f0(s.asIs)}</td>
+                    <td style={{ ...td, fontWeight: 700, color: "#0F5F4E" }}>{f0(s.reversao)}</td>
+                    <td colSpan={2}></td>
                   </tr>
                 );
-              })}
+                return [
+                  ...ocupam.map(renderLinha),
+                  linhaSub("Subtotal · ocupam vaga", D.subOcupaVaga, "#0E1F1B"),
+                  ...transf.map(renderLinha),
+                  transf.length ? linhaSub("Subtotal · transferência (fora da vaga)", D.subTransf, "#8A6100") : null,
+                ];
+              })()}
             </tbody>
             <tfoot>
-              <tr><td style={{ ...tdL, fontWeight: 700 }}>Total</td>
+              <tr><td style={{ ...tdL, fontWeight: 700 }}>Total geral</td>
                 <td style={{ ...td, fontWeight: 700 }}>{f0(D.cenTotal.tend)}</td>
                 <td style={{ ...td, fontWeight: 700 }}>{f0(D.cenTotal.asIs)}</td>
                 <td style={{ ...td, fontWeight: 700, color: "#0F5F4E" }}>{f0(D.cenTotal.reversao)}</td>
