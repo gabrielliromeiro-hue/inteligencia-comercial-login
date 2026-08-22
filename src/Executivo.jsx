@@ -1,4 +1,4 @@
-// VERSAO-SOMA-ZERO-V3 (self-paid puxa, FIES compensa, transf independente)
+// VERSAO-SOMA-ZERO-V4 (justificativas corrigidas)
 import React, { useState, useEffect, useMemo } from "react";
 import * as E from "./lib/engine-core.js";
 import { carregarTudo, salvarReversao } from "./lib/dados.js";
@@ -389,25 +389,29 @@ export default function Executivo({ modo = "executivo" }) {
     const melhorConv = convPorPraca.reduce((m, x) => (isFinite(x.convCalouro) && x.convCalouro > m ? x.convCalouro : m), 0);
     const mediaConvCal = (() => { const vs = convPorPraca.map((x) => x.convCalouro).filter((v) => isFinite(v)); return vs.length ? vs.reduce((a, b) => a + b, 0) / vs.length : NaN; })();
 
-    // JUSTIFICATIVAS por regra, por praça (só processos editáveis que crescem)
+    // JUSTIFICATIVAS por regra, por praça (só onde o self-paid cresce)
     const justificativas = [];
     if (uniSel === "__holding__") {
       st.unidades.filter((u) => alvoUnis.includes(u.id)).forEach((u) => {
         const det = detalhePraca[u.id];
-        if (!det || det.vagaLiberada < 0.5) return;
+        if (!det || (det.ganhoCalouro || 0) < 0.5) return;
         const itens = [];
-        // linha-mãe: quanto o FIES cedeu
-        itens.push(`FIES cede ${det.fiesCedePct.toFixed(0)}% (${f0(det.fiesAsIs)} → ${f0(det.fiesAsIs - det.vagaLiberada)} matríc.), liberando ~${f0(det.vagaLiberada)} vagas para o self-paid calouro.`);
-        // por processo self-paid que cresce
-        cenariosProc.filter((c) => (ehCalouroSP(c.p) || ehTransfer(c.p.nome))).forEach((c) => {
+        // por processo self-paid calouro que cresce
+        cenariosProc.filter((c) => ehCalouroSP(c.p)).forEach((c) => {
           const pp = c.porPraca.find((x) => x.uId === u.id);
           if (pp && pp.deltaMat > 0.5) {
             let txt = `${c.p.nome}: ${f0(pp.asIs)} → ${f0(pp.rev)} (+${f0(pp.deltaMat)}). `;
-            if (isFinite(pp.conv) && pp.conv > 0) txt += `Exige ~${f0(pp.inscNec)} inscrições adicionais na conversão de ${(pp.conv * 100).toFixed(1)}% (média ponderada dos 2 últimos intakes).`;
-            else txt += `Sem base de conversão recente para estimar o topo necessário.`;
+            if (isFinite(pp.conv) && pp.conv > 0) txt += `Exige ~${f0(pp.inscNec)} inscrições na conversão de ${(pp.conv * 100).toFixed(1)}% (2 últimos intakes).`;
+            else txt += `Sem base de conversão recente para estimar o topo.`;
             itens.push(txt);
           }
         });
+        // compensação no FIES
+        itens.push(`FIES cede ${f0(det.ganhoCalouro)} matrículas para compensar o ganho do self-paid (${f0(det.fiesAsIs)} → ${f0(det.fiesAsIs - det.ganhoCalouro)}).`);
+        // transferência, se cresceu
+        const ppT = cenariosProc.find((c) => ehTransfer(c.p.nome));
+        const ppTu = ppT && ppT.porPraca.find((x) => x.uId === u.id);
+        if (ppTu && ppTu.deltaMat > 0.5) itens.push(`Transferência: ${f0(ppTu.asIs)} → ${f0(ppTu.rev)} (+${f0(ppTu.deltaMat)}), crescimento independente (não ocupa vaga).`);
         if (itens.length) justificativas.push({ praca: u.nome, itens });
       });
     }
