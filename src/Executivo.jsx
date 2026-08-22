@@ -1,4 +1,4 @@
-// VERSAO-SOMA-ZERO-V4 (justificativas corrigidas)
+// VERSAO-SOMA-ZERO-V5 (edicao inline na coluna + grade)
 import React, { useState, useEffect, useMemo } from "react";
 import * as E from "./lib/engine-core.js";
 import { carregarTudo, salvarReversao } from "./lib/dados.js";
@@ -6,6 +6,8 @@ import { f0, brl, brlK, div, num } from "./lib/format.js";
 
 // pct local mantém default 0 casas (comportamento histórico desta tela)
 const pct = (n, d = 0) => (isFinite(n) ? (n * 100).toLocaleString("pt-BR", { minimumFractionDigits: d, maximumFractionDigits: d }) + "%" : "—");
+// grupos cujo % de recuperação é editável (self-paid calouro e transferência; FIES compensa, não edita)
+const ehGrupoEditavel = (grupo) => grupo === "Self paid" || grupo === "Transferência";
 const PALETA = ["#0F5F4E", "#2E8B72", "#5AAD95", "#8A6100", "#B08A3E", "#4A5C57", "#7D8F89"];
 
 // célula do funil: número + cor + seta comparando ao ciclo homólogo
@@ -513,7 +515,7 @@ export default function Executivo({ modo = "executivo" }) {
       <div style={card}>
         <div style={cardH}>Cenários de projeção — {D.alvo} · {D.nomeUni}</div>
         <div style={{ padding: "10px 16px 0", fontSize: 12, color: "#4A5C57", lineHeight: 1.5 }}>
-          <b>Tendência</b>: projeta a direção histórica (self-paid em queda, FIES em alta). <b>As Is</b>: mantém o realizado de {D.cicloHist} (se nada for feito). <b>Recuperação Self-Paid</b>: freia a queda e cresce de forma moderada e conservadora em Vestibular, ENEM, Segunda Graduação e Transferência, respeitando o limite de vagas. FIES mantido. O crescimento assume a conversão histórica de cada praça — vem de mais topo, não de melhora de funil.
+          <b>Tendência</b>: projeta a direção histórica (self-paid em queda, FIES em alta). <b>As Is</b>: mantém o realizado de {D.cicloHist} (se nada for feito). <b>Recuperação Self-Paid</b>: edite a % de crescimento de cada processo self-paid na coluna "Recup. vs As Is" (com uma unidade selecionada); o ganho é compensado no FIES automaticamente. A Transferência cresce à parte, sem tocar no FIES.
         </div>
         <div style={{ overflowX: "auto", marginTop: 8 }}>
           <table style={tbl}>
@@ -525,13 +527,33 @@ export default function Executivo({ modo = "executivo" }) {
             <tbody>
               {D.cenariosProc.filter((x) => x.asIs > 0 || x.tend > 0).map((x) => {
                 const dRev = x.reversao - x.asIs;
+                // editável inline só quando uma unidade específica está selecionada
+                const editavelInline = uniSel !== "__holding__" && (ehGrupoEditavel(x.grupo));
+                const chaveEdit = x.grupo.startsWith("Transfer") ? "rv_transf" : `rv_${x.p.id}`;
+                const mUsel = uniSel !== "__holding__" ? (st.meta[`${D.alvo}|${uniSel}`] || {}) : {};
                 return (
                   <tr key={x.p.id}>
-                    <td style={tdL}>{x.p.nome}{x.grupo === "FIES" && <span style={{ fontSize: 9, color: "#8A6100", marginLeft: 6 }}>congelado</span>}</td>
+                    <td style={tdL}>{x.p.nome}{x.grupo === "FIES" && <span style={{ fontSize: 9, color: "#8A6100", marginLeft: 6 }}>compensa</span>}</td>
                     <td style={td}>{f0(x.tend)}</td>
                     <td style={td}>{f0(x.asIs)}</td>
                     <td style={{ ...td, fontWeight: 700, color: "#0F5F4E" }}>{f0(x.reversao)}</td>
-                    <td style={{ ...td, color: dRev > 0.5 ? "#0F5F4E" : (dRev < -0.5 ? "#9B1C1C" : "#4A5C57") }}>{Math.abs(dRev) > 0.5 ? (dRev > 0 ? "+" : "−") + f0(Math.abs(dRev)) : "—"}</td>
+                    <td style={{ ...td, color: dRev > 0.5 ? "#0F5F4E" : (dRev < -0.5 ? "#9B1C1C" : "#4A5C57") }}>
+                      {editavelInline ? (
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
+                          <input defaultValue={mUsel[chaveEdit] !== undefined ? mUsel[chaveEdit] : ""} placeholder="0"
+                            style={{ width: 44, border: "1px solid #B7D8CE", borderRadius: 4, padding: "2px 4px", fontSize: 11.5, textAlign: "right", fontFamily: "ui-monospace,monospace" }}
+                            inputMode="decimal"
+                            onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
+                            onBlur={(e) => {
+                              const nv = e.target.value === "" ? 0 : num(e.target.value);
+                              setSt((s) => { const k = `${D.alvo}|${uniSel}`; const meta = { ...(s.meta[k] || {}) }; if (e.target.value === "") delete meta[chaveEdit]; else meta[chaveEdit] = nv; return { ...s, meta: { ...s.meta, [k]: meta } }; });
+                              salvarReversao(D.alvo, uniSel, chaveEdit, nv).catch(() => {});
+                            }} />
+                          <span style={{ fontSize: 10, color: "#4A5C57" }}>%</span>
+                          <span style={{ minWidth: 34, textAlign: "right" }}>{Math.abs(dRev) > 0.5 ? (dRev > 0 ? "+" : "−") + f0(Math.abs(dRev)) : ""}</span>
+                        </span>
+                      ) : (Math.abs(dRev) > 0.5 ? (dRev > 0 ? "+" : "−") + f0(Math.abs(dRev)) : "—")}
+                    </td>
                     <td style={tdMut}>{x.mexeRev && isFinite(x.inscRev) ? f0(x.inscRev) + " insc." : "—"}</td>
                   </tr>
                 );
