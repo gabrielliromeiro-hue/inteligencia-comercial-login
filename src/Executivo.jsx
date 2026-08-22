@@ -1,3 +1,4 @@
+// VERSAO-FIX-TRAVA-V2 (recuperação sem trava de vaga)
 import React, { useState, useEffect, useMemo } from "react";
 import * as E from "./lib/engine-core.js";
 import { carregarTudo, salvarReversao } from "./lib/dados.js";
@@ -303,81 +304,61 @@ export default function Executivo({ modo = "executivo" }) {
       return { p, asIs, tend: projAgg[p.id] || 0 };
     });
 
-    // ==== RECUPERAÇÃO SELF-PAID: FIES cede vaga, self-paid e transferência crescem ====
-    // Cálculo POR PRAÇA. Overrides editáveis (em meta da praça):
-    //   rv_fies_ced = % que o FIES cede (padrão 10)
-    //   rv_transf   = % de crescimento da transferência (padrão 8)
-    const FIES_CEDE_PADRAO = 10, TRANSF_CRESCE_PADRAO = 8;
-    const recupPorProc = {}; // pid -> total recuperado (holding/filtro)
-    st.processos.forEach((p) => (recupPorProc[p.id] = 0));
-    const detalhePraca = {}; // uId -> {vagaLiberada, fiesCedePct, ...}
-    const porPracaProc = {}; // pid -> [{uId, asIs, rev, conv, inscNec}]
-    st.processos.forEach((p) => (porPracaProc[p.id] = []));
+    // ==== RECUPERAÇÃO SELF-PAID (por praça) ====
+    // O FIES cede uma % (rv_fies_ced, padrão 10) das suas matrículas; essa vaga vira
+    // self-paid calouro, distribuída entre Vestibular/ENEM/Segunda Graduação pela
+    // proporção histórica. A transferência cresce rv_transf% (padrão 8). Como o FIES
+    // cede exatamente o que o calouro recebe, a soma de quem ocupa vaga não aumenta —
+    // não há estouro de vaga, logo não há trava (era ela que anulava o efeito).
+    const FIES_CEDE_PADRAO = 10, TRANSF_PADRAO = 8;
+    const pctOverride = (raw, padrao) => { const v = num(raw); return isFinite(v) && v !== 0 ? v : padrao; };
+
+    const recupPorProc = {};
+    const porPracaProc = {};
+    const detalhePraca = {};
+    st.processos.forEach((p) => { recupPorProc[p.id] = 0; porPracaProc[p.id] = []; });
 
     alvoUnis.forEach((u) => {
       const mU = st.meta[`${cfg.alvo}|${u}`] || {};
-      // matrículas As Is por processo nesta praça
-      const asIsProc = {};
-      st.processos.forEach((p) => { asIsProc[p.id] = g(st.funil, `${cicloHist}|${u}|${p.id}`, "matric"); });
-      // FIES cede X%
-      const fiesProc = st.processos.find((p) => ehFIES(p.nome));
-      const fiesAsIs = fiesProc ? asIsProc[fiesProc.id] : 0;
-      const fiesCedePct = (() => { const ov = num(mU.rv_fies_ced); return ov !== 0 && isFinite(ov) ? ov : FIES_CEDE_PADRAO; })();
-      const vagaLiberada = fiesAsIs * (fiesCedePct / 100);
-      // proporção histórica dos calouros self-paid (para distribuir a vaga liberada)
+      const asIsU = {};
+      st.processos.forEach((p) => (asIsU[p.id] = g(st.funil, `${cicloHist}|${u}|${p.id}`, "matric")));
+
+      const fiesP = st.processos.find((p) => ehFIES(p.nome));
+      const fiesAsIs = fiesP ? asIsU[fiesP.id] : 0;
+      const vagaLiberada = fiesAsIs * (pctOverride(mU.rv_fies_ced, FIES_CEDE_PADRAO) / 100);
+
       const calouros = st.processos.filter(ehCalouroSP);
-      const somaCalAsIs = calouros.reduce((a, p) => a + asIsProc[p.id], 0);
-      // aplica por processo
+      const somaCal = calouros.reduce((a, p) => a + asIsU[p.id], 0);
+
       st.processos.forEach((p) => {
-        const asIsU = asIsProc[p.id];
-        let revU = asIsU; // default: mantém As Is
+        const base = asIsU[p.id];
+        let rev = base;
         if (ehCalouroSP(p)) {
-          // recebe parte da vaga liberada pela proporção histórica
-          const prop = somaCalAsIs > 0 ? asIsU / somaCalAsIs : (calouros.length ? 1 / calouros.length : 0);
-          revU = asIsU + vagaLiberada * prop;
+          const prop = somaCal > 0 ? base / somaCal : (calouros.length ? 1 / calouros.length : 0);
+          rev = base + vagaLiberada * prop;
         } else if (ehFIES(p.nome)) {
-          revU = fiesAsIs - vagaLiberada; // FIES cede
+          rev = fiesAsIs - vagaLiberada;
         } else if (ehTransfer(p.nome)) {
-          const ovT = num(mU.rv_transf);
-          const tPct = ovT !== 0 && isFinite(ovT) ? ovT : TRANSF_CRESCE_PADRAO;
-          revU = asIsU * (1 + tPct / 100); // transferência cresce
+          rev = base * (1 + pctOverride(mU.rv_transf, TRANSF_PADRAO) / 100);
         }
-        recupPorProc[p.id] += revU;
+        recupPorProc[p.id] += rev;
         const conv = conv2ultimos(u, p.id);
-        const deltaMat = revU - asIsU;
-        const inscNec = deltaMat > 0 && isFinite(conv) && conv > 0 ? deltaMat / conv : 0;
-        porPracaProc[p.id].push({ uId: u, nome: (st.unidades.find((x) => x.id === u) || {}).nome, asIs: asIsU, rev: revU, conv, inscNec, deltaMat });
+        const delta = rev - base;
+        porPracaProc[p.id].push({ uId: u, asIs: base, rev, conv, deltaMat: delta,
+          inscNec: delta > 0 && isFinite(conv) && conv > 0 ? delta / conv : 0 });
       });
-      detalhePraca[u] = { vagaLiberada, fiesCedePct, fiesAsIs };
+      detalhePraca[u] = { vagaLiberada, fiesAsIs, fiesCedePct: pctOverride(mU.rv_fies_ced, FIES_CEDE_PADRAO) };
     });
 
-    // monta cenariosProc no formato usado pela tela
     const cenariosProc = baseProc.map((b) => {
-      const rec = recupPorProc[b.p.id] || 0;
       const pp = porPracaProc[b.p.id] || [];
-      const inscRev = pp.reduce((a, x) => a + (x.inscNec || 0), 0);
-      return { p: b.p, grupo: grupoDe(b.p.nome), asIs: b.asIs, tend: b.tend, reversao: rec,
-        inscRev, porPraca: pp, mexeRev: Math.abs(rec - b.asIs) > 0.5,
+      return { p: b.p, grupo: grupoDe(b.p.nome), asIs: b.asIs, tend: b.tend,
+        reversao: recupPorProc[b.p.id] || 0, porPraca: pp,
+        inscRev: pp.reduce((a, x) => a + (x.inscNec || 0), 0),
+        mexeRev: Math.abs((recupPorProc[b.p.id] || 0) - b.asIs) > 0.5,
         editavel: ehCalouroSP(b.p) || ehTransfer(b.p.nome) || ehFIES(b.p.nome) };
     });
-
-    // ==== TRAVA DE VAGA: soma dos que ocupam vaga não passa da vaga da praça ====
-    const travaInfo = {};
-    alvoUnis.forEach((u) => {
-      const mU = st.meta[`${cfg.alvo}|${u}`] || {};
-      const vagaU = num(mU.vagas);
-      if (vagaU <= 0) return;
-      let somaVaga = 0;
-      cenariosProc.forEach((c) => { if (c.p.ocupaVaga !== false) { const pp = c.porPraca.find((x) => x.uId === u); if (pp) somaVaga += pp.rev; } });
-      if (somaVaga > vagaU + 0.5) {
-        const fator = vagaU / somaVaga;
-        cenariosProc.forEach((c) => {
-          if (c.p.ocupaVaga !== false) { const pp = c.porPraca.find((x) => x.uId === u);
-            if (pp) { const antes = pp.rev; pp.rev = pp.rev * fator; pp.travou = true; c.reversao = c.reversao - antes + pp.rev; } }
-        });
-        travaInfo[u] = { vaga: vagaU, somaRecup: somaVaga, estourou: true, fator };
-      } else travaInfo[u] = { vaga: vagaU, somaRecup: somaVaga, estourou: false, fator: 1 };
-    });
+    const travaInfo = {}; // trava removida: a mecânica FIES→self-paid conserva a soma de vaga
 
     // totais e por grupo
     const cenTotal = cenariosProc.reduce((a, x) => ({ asIs: a.asIs + x.asIs, tend: a.tend + x.tend, reversao: a.reversao + x.reversao }), { asIs: 0, tend: 0, reversao: 0 });
@@ -575,17 +556,8 @@ export default function Executivo({ modo = "executivo" }) {
           </table>
         </div>
         <div style={legenda}>
-          <b>Leitura para o board:</b> a Tendência revela o risco (para onde vamos sem agir), o As Is mostra o freio da queda (manter o de {D.cicloHist}), a Recuperação Self-Paid mostra a retomada moderada e o esforço de topo que ela exige, travada no limite de vagas. "Topo nec." = inscrições necessárias na conversão histórica da praça para sustentar a matrícula recuperada. Os % são sugestões conservadoras baseadas no histórico de cada praça, ajustáveis.
+          <b>Leitura para o board:</b> a Tendência revela o risco (para onde vamos sem agir), o As Is mostra o freio da queda (manter o de {D.cicloHist}), a Recuperação Self-Paid mostra a retomada moderada: o FIES cede parte da vaga para o self-paid calouro crescer. "Topo nec." = inscrições necessárias na conversão dos 2 últimos intakes para sustentar a matrícula recuperada. Ajustável por praça.
         </div>
-        {(() => {
-          const travadas = Object.entries(D.travaInfo || {}).filter(([, v]) => v.estourou).map(([uId]) => (st.unidades.find((u) => u.id === uId) || {}).nome);
-          if (travadas.length === 0) return null;
-          return (
-            <div style={{ margin: "0 16px 12px", padding: "8px 12px", background: "#FBF2DC", border: "1px solid #E8D9A8", borderRadius: 6, fontSize: 12, color: "#6B5200" }}>
-              <b>Limite de vagas atingido:</b> em {travadas.join(", ")}, a recuperação do self-paid calouro foi travada porque a soma dos processos que ocupam vaga bateria no teto de vagas da praça. O crescimento foi reduzido para caber. Para recuperar mais self-paid nessas praças, seria preciso abrir vaga (ou reduzir o espaço de outro processo que ocupa vaga).
-            </div>
-          );
-        })()}
         <div style={{ padding: "0 16px 14px" }}>
           <button onClick={() => setEditRev(!editRev)} style={{ fontSize: 12, padding: "5px 12px", border: "1px solid #0F5F4E", borderRadius: 5, background: editRev ? "#0F5F4E" : "#fff", color: editRev ? "#fff" : "#0F5F4E", cursor: "pointer", fontWeight: 600 }}>
             {editRev ? "Fechar edição" : (uniSel === "__holding__" ? "Ajustar recuperação por praça" : "Ajustar recuperação desta unidade")}
