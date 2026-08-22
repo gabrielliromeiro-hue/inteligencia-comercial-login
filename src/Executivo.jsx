@@ -1,4 +1,4 @@
-// VERSAO-SUBTOTAL-VAGA-V7 (subtotal ocupam-vaga vs transferência)
+// VERSAO-FECHA-VAGA-V8 (tendencia e recup fecham na vaga)
 import React, { useState, useEffect, useMemo } from "react";
 import * as E from "./lib/engine-core.js";
 import { carregarTudo, salvarReversao } from "./lib/dados.js";
@@ -73,6 +73,14 @@ export default function Executivo({ modo = "executivo" }) {
       const shP = E.resolveShares(rf.share, ovP, st.processos.map((p) => p.id));
       const metaMatric = num(m.matric) * (cfg.cenario / 100);
       const out = {}; st.processos.forEach((p) => (out[p.id] = metaMatric * (shP.shares[p.id] || 0)));
+      // FECHAMENTO NA VAGA: os processos que ocupam vaga devem somar exatamente a vaga da praça.
+      // Ajusta proporcional ao peso de cada um (funciona para faltar ou sobrar). Transferência fica fora.
+      const vagaU = num(m.vagas);
+      if (vagaU > 0) {
+        const idsVaga = st.processos.filter((p) => p.ocupaVaga !== false).map((p) => p.id);
+        const somaVaga = idsVaga.reduce((a, id) => a + out[id], 0);
+        if (somaVaga > 0) { const fator = vagaU / somaVaga; idsVaga.forEach((id) => (out[id] *= fator)); }
+      }
       return { out, metaMatric, metaBase: num(m.matric) };
     };
     const projAgg = {}; let metaTotal = 0;
@@ -343,6 +351,14 @@ export default function Executivo({ modo = "executivo" }) {
       st.processos.forEach((p) => {
         if (ehTransfer(p.nome)) revU[p.id] = asIsU[p.id] * (1 + pctVal(mU.rv_transf, TRANSF_PADRAO) / 100);
       });
+      // 4) TRAVA DE VAGA: os que ocupam vaga nunca somam mais que a vaga da praça
+      // (mesmo que o As Is já tenha extrapolado). Reduz proporcional para caber exatamente.
+      const vagaU = num(mU.vagas);
+      if (vagaU > 0) {
+        const idsVaga = st.processos.filter((p) => p.ocupaVaga !== false).map((p) => p.id);
+        const somaVaga = idsVaga.reduce((a, id) => a + revU[id], 0);
+        if (somaVaga > vagaU + 0.001) { const fator = vagaU / somaVaga; idsVaga.forEach((id) => (revU[id] *= fator)); }
+      }
 
       st.processos.forEach((p) => {
         recupPorProc[p.id] += revU[p.id];
