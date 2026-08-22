@@ -1,4 +1,4 @@
-// VERSAO-SOMA-ZERO-V5 (edicao inline na coluna + grade)
+// VERSAO-GRUPO-FIX-V6 (classificadores de grupo corrigidos)
 import React, { useState, useEffect, useMemo } from "react";
 import * as E from "./lib/engine-core.js";
 import { carregarTudo, salvarReversao } from "./lib/dados.js";
@@ -6,8 +6,8 @@ import { f0, brl, brlK, div, num } from "./lib/format.js";
 
 // pct local mantém default 0 casas (comportamento histórico desta tela)
 const pct = (n, d = 0) => (isFinite(n) ? (n * 100).toLocaleString("pt-BR", { minimumFractionDigits: d, maximumFractionDigits: d }) + "%" : "—");
-// grupos cujo % de recuperação é editável (self-paid calouro e transferência; FIES compensa, não edita)
-const ehGrupoEditavel = (grupo) => grupo === "Self paid" || grupo === "Transferência";
+// grupos cujo % de recuperação é editável (self-paid calouro e transferência externa; FIES compensa, não edita)
+const ehGrupoEditavel = (grupo) => grupo === "selfpaid" || grupo === "transf";
 const PALETA = ["#0F5F4E", "#2E8B72", "#5AAD95", "#8A6100", "#B08A3E", "#4A5C57", "#7D8F89"];
 
 // célula do funil: número + cor + seta comparando ao ciclo homólogo
@@ -278,10 +278,10 @@ export default function Executivo({ modo = "executivo" }) {
     const cicloHistAnt = (anoH - 1) + "." + semH; // homólogo do ciclo As Is
     const temAnt = st.ciclos.includes(cicloHistAnt);
     // classificação de processo
-    const ehSelfPaid = (nome) => grupoDe(nome) === "Self paid";
+    const ehSelfPaid = (nome) => grupoDe(nome) === "selfpaid";
     const ehENEM = (nome) => (nome || "").toLowerCase().includes("enem");
-    const ehTransfer = (nome) => grupoDe(nome).startsWith("Transfer");
-    const ehFIES = (nome) => grupoDe(nome) === "FIES";
+    const ehTransfer = (nome) => grupoDe(nome) === "transf" || grupoDe(nome) === "transfFies";
+    const ehFIES = (nome) => grupoDe(nome) === "fies";
     // calouro self-paid que ocupa vaga: Vestibular, Agendado, ENEM, Segunda Graduação (NÃO FIES, NÃO transferência)
     const ehCalouroSP = (p) => p.ocupaVaga !== false && ehSelfPaid(p.nome) && !ehTransfer(p.nome);
 
@@ -529,11 +529,11 @@ export default function Executivo({ modo = "executivo" }) {
                 const dRev = x.reversao - x.asIs;
                 // editável inline só quando uma unidade específica está selecionada
                 const editavelInline = uniSel !== "__holding__" && (ehGrupoEditavel(x.grupo));
-                const chaveEdit = x.grupo.startsWith("Transfer") ? "rv_transf" : `rv_${x.p.id}`;
+                const chaveEdit = x.grupo === "transf" ? "rv_transf" : `rv_${x.p.id}`;
                 const mUsel = uniSel !== "__holding__" ? (st.meta[`${D.alvo}|${uniSel}`] || {}) : {};
                 return (
                   <tr key={x.p.id}>
-                    <td style={tdL}>{x.p.nome}{x.grupo === "FIES" && <span style={{ fontSize: 9, color: "#8A6100", marginLeft: 6 }}>compensa</span>}</td>
+                    <td style={tdL}>{x.p.nome}{x.grupo === "fies" && <span style={{ fontSize: 9, color: "#8A6100", marginLeft: 6 }}>compensa</span>}</td>
                     <td style={td}>{f0(x.tend)}</td>
                     <td style={td}>{f0(x.asIs)}</td>
                     <td style={{ ...td, fontWeight: 700, color: "#0F5F4E" }}>{f0(x.reversao)}</td>
@@ -574,11 +574,11 @@ export default function Executivo({ modo = "executivo" }) {
           <table style={tbl}>
             <thead><tr><th style={{ ...th, textAlign: "left" }}>Grupo</th><th style={th}>Tendência</th><th style={th}>As Is</th><th style={th}>Recup. Self-Paid</th></tr></thead>
             <tbody>
-              {["Self paid", "FIES", "Transferência", "Transferência FIES", "Recuperado"].filter((gr) => D.cenPorGrupo[gr] && (D.cenPorGrupo[gr].asIs > 0 || D.cenPorGrupo[gr].tend > 0)).map((gr) => (
-                <tr key={gr}><td style={tdL}>{gr}</td>
-                  <td style={td}>{f0(D.cenPorGrupo[gr].tend)}</td>
-                  <td style={td}>{f0(D.cenPorGrupo[gr].asIs)}</td>
-                  <td style={{ ...td, color: "#0F5F4E" }}>{f0(D.cenPorGrupo[gr].reversao)}</td></tr>
+              {[["selfpaid", "Self paid"], ["fies", "FIES"], ["transf", "Transferência"], ["transfFies", "Transferência FIES"], ["recuperado", "Recuperado"]].filter(([cod]) => D.cenPorGrupo[cod] && (D.cenPorGrupo[cod].asIs > 0 || D.cenPorGrupo[cod].tend > 0)).map(([cod, rotulo]) => (
+                <tr key={cod}><td style={tdL}>{rotulo}</td>
+                  <td style={td}>{f0(D.cenPorGrupo[cod].tend)}</td>
+                  <td style={td}>{f0(D.cenPorGrupo[cod].asIs)}</td>
+                  <td style={{ ...td, color: "#0F5F4E" }}>{f0(D.cenPorGrupo[cod].reversao)}</td></tr>
               ))}
             </tbody>
           </table>
@@ -604,7 +604,7 @@ export default function Executivo({ modo = "executivo" }) {
             <table style={tbl}>
               <thead><tr>
                 <th style={{ ...th, textAlign: "left" }}>Praça</th>
-                {D.cenariosProc.filter((c) => c.grupo === "Self paid" && !c.p.nome.toLowerCase().includes("transfer")).map((c) => <th key={c.p.id} style={th}>{c.p.nome} (%)</th>)}
+                {D.cenariosProc.filter((c) => c.grupo === "selfpaid").map((c) => <th key={c.p.id} style={th}>{c.p.nome} (%)</th>)}
                 <th style={th}>Transf. (%)</th>
                 <th style={th}>FIES resultante</th>
               </tr></thead>
@@ -627,7 +627,7 @@ export default function Executivo({ modo = "executivo" }) {
                   return (
                     <tr key={u.id}>
                       <td style={tdL}>{u.nome}</td>
-                      {D.cenariosProc.filter((c) => c.grupo === "Self paid" && !c.p.nome.toLowerCase().includes("transfer")).map((c) => <td key={c.p.id} style={td}>{campo(`rv_${c.p.id}`, "0")}</td>)}
+                      {D.cenariosProc.filter((c) => c.grupo === "selfpaid").map((c) => <td key={c.p.id} style={td}>{campo(`rv_${c.p.id}`, "0")}</td>)}
                       <td style={td}>{campo("rv_transf", "8")}</td>
                       <td style={{ ...tdMut, color: (det.ganhoCalouro || 0) > 0.5 ? "#9B1C1C" : "#4A5C57" }}>{fiesResultante != null ? f0(fiesResultante) : "—"}</td>
                     </tr>
