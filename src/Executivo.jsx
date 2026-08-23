@@ -1,4 +1,4 @@
-// VERSAO-FECHA-VAGA-V8 (tendencia e recup fecham na vaga)
+// VERSAO-FECHA-VAGA-V9 (recup fecha na vaga todas unidades, editado fixo)
 import React, { useState, useEffect, useMemo } from "react";
 import * as E from "./lib/engine-core.js";
 import { carregarTudo, salvarReversao } from "./lib/dados.js";
@@ -333,32 +333,49 @@ export default function Executivo({ modo = "executivo" }) {
       const asIsU = {};
       st.processos.forEach((p) => (asIsU[p.id] = g(st.funil, `${cicloHist}|${u}|${p.id}`, "matric")));
 
-      // 1) self-paid calouro cresce a % editável de cada um; soma o ganho total
-      let ganhoCalouro = 0;
+      // 1) processos editados (self-paid calouro com % digitada) ficam FIXOS no valor definido.
+      //    Não editados são candidatos a absorver o complemento até fechar na vaga.
       const revU = {};
+      const foiEditado = {};
+      let ganhoCalouro = 0;
       st.processos.forEach((p) => {
         revU[p.id] = asIsU[p.id];
         if (ehCalouroSP(p)) {
-          const cresc = pctVal(mU[`rv_${p.id}`], 0) / 100; // padrão 0 = sem crescimento
-          revU[p.id] = asIsU[p.id] * (1 + cresc);
-          ganhoCalouro += revU[p.id] - asIsU[p.id];
+          const raw = mU[`rv_${p.id}`];
+          const temEdit = raw !== undefined && raw !== "" && num(raw) !== 0;
+          if (temEdit) { revU[p.id] = asIsU[p.id] * (1 + num(raw) / 100); foiEditado[p.id] = true; ganhoCalouro += revU[p.id] - asIsU[p.id]; }
         }
       });
-      // 2) FIES compensa: cai exatamente o que o calouro ganhou (soma zero)
-      const fiesP = st.processos.find((p) => ehFIES(p.nome));
-      if (fiesP) revU[fiesP.id] = asIsU[fiesP.id] - ganhoCalouro;
-      // 3) transferência cresce independente (não mexe no FIES)
+      // 2) transferência cresce independente, à parte (não ocupa vaga, não entra no fechamento)
       st.processos.forEach((p) => {
         if (ehTransfer(p.nome)) revU[p.id] = asIsU[p.id] * (1 + pctVal(mU.rv_transf, TRANSF_PADRAO) / 100);
       });
-      // 4) TRAVA DE VAGA: os que ocupam vaga nunca somam mais que a vaga da praça
-      // (mesmo que o As Is já tenha extrapolado). Reduz proporcional para caber exatamente.
+      // 3) FECHAMENTO NA VAGA (as duas direções): a soma dos que ocupam vaga = vaga da praça.
+      //    Editados ficam fixos; o complemento (vaga − editados) é distribuído entre os
+      //    NÃO editados que ocupam vaga (self-paid + FIES), proporcional ao histórico (As Is).
+      //    Se ninguém foi editado, distribui entre todos os que ocupam vaga.
+      const fiesP = st.processos.find((p) => ehFIES(p.nome));
       const vagaU = num(mU.vagas);
       if (vagaU > 0) {
         const idsVaga = st.processos.filter((p) => p.ocupaVaga !== false).map((p) => p.id);
-        const somaVaga = idsVaga.reduce((a, id) => a + revU[id], 0);
-        if (somaVaga > vagaU + 0.001) { const fator = vagaU / somaVaga; idsVaga.forEach((id) => (revU[id] *= fator)); }
+        const somaEditados = idsVaga.filter((id) => foiEditado[id]).reduce((a, id) => a + revU[id], 0);
+        const idsLivres = idsVaga.filter((id) => !foiEditado[id]);
+        const restante = vagaU - somaEditados; // quanto os livres devem somar
+        const baseHist = idsLivres.reduce((a, id) => a + asIsU[id], 0);
+        if (idsLivres.length && restante > 0) {
+          idsLivres.forEach((id) => {
+            const prop = baseHist > 0 ? asIsU[id] / baseHist : 1 / idsLivres.length;
+            revU[id] = restante * prop;
+          });
+        } else if (idsLivres.length && restante <= 0) {
+          // editados já estouram a vaga: zera os livres e reduz os editados proporcional
+          idsLivres.forEach((id) => (revU[id] = 0));
+          const somaEd = somaEditados || 1; const fator = vagaU / somaEd;
+          idsVaga.filter((id) => foiEditado[id]).forEach((id) => (revU[id] *= fator));
+        }
       }
+      // ganhoCalouro para o detalhe (FIES resultante na grade)
+      ganhoCalouro = fiesP ? asIsU[fiesP.id] - revU[fiesP.id] : 0;
 
       st.processos.forEach((p) => {
         recupPorProc[p.id] += revU[p.id];
