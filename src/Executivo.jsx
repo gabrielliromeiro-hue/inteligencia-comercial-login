@@ -1,4 +1,4 @@
-// VERSAO-FECHA-VAGA-V9 (recup fecha na vaga todas unidades, editado fixo)
+// VERSAO-TOPO-V10 (topo nec = total/conv media 2 intakes, FIES fora)
 import React, { useState, useEffect, useMemo } from "react";
 import * as E from "./lib/engine-core.js";
 import { carregarTudo, salvarReversao } from "./lib/dados.js";
@@ -295,16 +295,15 @@ export default function Executivo({ modo = "executivo" }) {
 
     // conversão ponderada dos 2 últimos intakes homólogos (peso maior no recente): 0.65 / 0.35
     const ciclosHomAll = st.ciclos.filter((c) => c.split(".")[1] === semH && c <= cicloHist).sort().reverse();
+    // conversão média dos 2 últimos intakes homólogos (agregada: soma matríc / soma insc)
     const conv2ultimos = (uId, pid) => {
       const cs = ciclosHomAll.slice(0, 2); // [mais recente, anterior]
-      const pesos = [0.65, 0.35];
-      let numr = 0, den = 0;
-      cs.forEach((c, i) => {
-        const insc = g(st.funil, `${c}|${uId}|${pid}`, "insc");
-        const mat = g(st.funil, `${c}|${uId}|${pid}`, "matric");
-        if (insc > 0) { numr += pesos[i] * (mat / insc); den += pesos[i]; }
+      let sMat = 0, sInsc = 0;
+      cs.forEach((c) => {
+        sInsc += g(st.funil, `${c}|${uId}|${pid}`, "insc");
+        sMat += g(st.funil, `${c}|${uId}|${pid}`, "matric");
       });
-      return den > 0 ? numr / den : NaN;
+      return sInsc > 0 ? sMat / sInsc : NaN;
     };
 
     // As Is e Tendência por processo (base)
@@ -381,17 +380,22 @@ export default function Executivo({ modo = "executivo" }) {
         recupPorProc[p.id] += revU[p.id];
         const conv = conv2ultimos(u, p.id);
         const delta = revU[p.id] - asIsU[p.id];
+        // Topo nec.: inscrições para o TOTAL de matrículas recuperadas (revU), na conversão média.
+        // FIES fica fora (não tem inscrição -> topo não se aplica).
+        const semTopo = ehFIES(p.nome);
         porPracaProc[p.id].push({ uId: u, asIs: asIsU[p.id], rev: revU[p.id], conv, deltaMat: delta,
-          inscNec: delta > 0 && isFinite(conv) && conv > 0 ? delta / conv : 0 });
+          inscNec: !semTopo && revU[p.id] > 0 && isFinite(conv) && conv > 0 ? revU[p.id] / conv : (semTopo ? null : 0) });
       });
       detalhePraca[u] = { ganhoCalouro, fiesAsIs: fiesP ? asIsU[fiesP.id] : 0 };
     });
 
     const cenariosProc = baseProc.map((b) => {
       const pp = porPracaProc[b.p.id] || [];
+      const somaInsc = pp.reduce((a, x) => a + (x.inscNec || 0), 0);
       return { p: b.p, grupo: grupoDe(b.p.nome), asIs: b.asIs, tend: b.tend,
         reversao: recupPorProc[b.p.id] || 0, porPraca: pp,
-        inscRev: pp.reduce((a, x) => a + (x.inscNec || 0), 0),
+        inscRev: ehFIES(b.p.nome) ? null : somaInsc, // FIES não tem topo
+        temTopo: !ehFIES(b.p.nome),
         mexeRev: Math.abs((recupPorProc[b.p.id] || 0) - b.asIs) > 0.5,
         editavel: ehCalouroSP(b.p) || ehTransfer(b.p.nome) };
     });
@@ -596,7 +600,7 @@ export default function Executivo({ modo = "executivo" }) {
                           </span>
                         ) : (Math.abs(dRev) > 0.5 ? (dRev > 0 ? "+" : "−") + f0(Math.abs(dRev)) : "—")}
                       </td>
-                      <td style={tdMut}>{x.mexeRev && isFinite(x.inscRev) ? f0(x.inscRev) + " insc." : "—"}</td>
+                      <td style={tdMut}>{x.temTopo && isFinite(x.inscRev) && x.inscRev > 0 ? f0(x.inscRev) + " insc." : "—"}</td>
                     </tr>
                   );
                 };
