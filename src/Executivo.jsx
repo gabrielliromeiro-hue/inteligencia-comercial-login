@@ -1,4 +1,4 @@
-// VERSAO-CONV-SIMPLES-V12 (conversao media simples 3 intakes)
+// VERSAO-TOPO-CONV-VISIVEL-V13 (topo por processo incl transf, conversao visivel)
 import React, { useState, useEffect, useMemo } from "react";
 import * as E from "./lib/engine-core.js";
 import { carregarTudo, salvarReversao } from "./lib/dados.js";
@@ -393,10 +393,13 @@ export default function Executivo({ modo = "executivo" }) {
     const cenariosProc = baseProc.map((b) => {
       const pp = porPracaProc[b.p.id] || [];
       const somaInsc = pp.reduce((a, x) => a + (x.inscNec || 0), 0);
+      // conversão média exibida: média simples das conversões por praça no filtro atual
+      const convsValidas = pp.map((x) => x.conv).filter((c) => isFinite(c) && c > 0);
+      const convMediaProc = convsValidas.length ? convsValidas.reduce((a, c) => a + c, 0) / convsValidas.length : NaN;
       return { p: b.p, grupo: grupoDe(b.p.nome), asIs: b.asIs, tend: b.tend,
         reversao: recupPorProc[b.p.id] || 0, porPraca: pp,
         inscRev: ehFIES(b.p.nome) ? null : somaInsc, // FIES não tem topo
-        temTopo: !ehFIES(b.p.nome),
+        temTopo: !ehFIES(b.p.nome), convMedia: convMediaProc,
         mexeRev: Math.abs((recupPorProc[b.p.id] || 0) - b.asIs) > 0.5,
         editavel: ehCalouroSP(b.p) || ehTransfer(b.p.nome) };
     });
@@ -601,7 +604,12 @@ export default function Executivo({ modo = "executivo" }) {
                           </span>
                         ) : (Math.abs(dRev) > 0.5 ? (dRev > 0 ? "+" : "−") + f0(Math.abs(dRev)) : "—")}
                       </td>
-                      <td style={tdMut}>{x.temTopo && isFinite(x.inscRev) && x.inscRev > 0 ? f0(x.inscRev) + " insc." : "—"}</td>
+                      <td style={tdMut}>{x.temTopo && isFinite(x.inscRev) && x.inscRev > 0 ? (
+                        <span style={{ display: "inline-block", textAlign: "right" }}>
+                          {f0(x.inscRev)} insc.
+                          {isFinite(x.convMedia) && x.convMedia > 0 && <span style={{ display: "block", fontSize: 9.5, color: "#8FA39D" }}>conv. {(x.convMedia * 100).toFixed(1)}%</span>}
+                        </span>
+                      ) : "—"}</td>
                     </tr>
                   );
                 };
