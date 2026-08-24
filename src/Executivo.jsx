@@ -1,4 +1,4 @@
-// VERSAO-CONV-3INTAKES-V11 (conversao ponderada 3 intakes, ignora furados)
+// VERSAO-CONV-SIMPLES-V12 (conversao media simples 3 intakes)
 import React, { useState, useEffect, useMemo } from "react";
 import * as E from "./lib/engine-core.js";
 import { carregarTudo, salvarReversao } from "./lib/dados.js";
@@ -293,19 +293,18 @@ export default function Executivo({ modo = "executivo" }) {
     // calouro self-paid que ocupa vaga: Vestibular, Agendado, ENEM, Segunda Graduação (NÃO FIES, NÃO transferência)
     const ehCalouroSP = (p) => p.ocupaVaga !== false && ehSelfPaid(p.nome) && !ehTransfer(p.nome);
 
-    // conversão conservadora: média PONDERADA dos 3 últimos intakes homólogos, peso maior no
-    // recente [recente 0.5, meio 0.3, antigo 0.2]. Ignora ciclo com dado furado (insc=0).
+    // conversão conservadora: média SIMPLES dos 3 últimos intakes homólogos (cada ano conta
+    // igual: soma as conversões e divide pela quantidade). Ignora ciclo com dado furado (insc=0).
     const ciclosHomAll = st.ciclos.filter((c) => c.split(".")[1] === semH && c <= cicloHist).sort().reverse();
     const conv2ultimos = (uId, pid) => {
       const cs = ciclosHomAll.slice(0, 3); // [mais recente, meio, antigo]
-      const pesos = [0.5, 0.3, 0.2];
-      let numr = 0, den = 0;
-      cs.forEach((c, i) => {
+      let soma = 0, n = 0;
+      cs.forEach((c) => {
         const insc = g(st.funil, `${c}|${uId}|${pid}`, "insc");
         const mat = g(st.funil, `${c}|${uId}|${pid}`, "matric");
-        if (insc > 0) { numr += pesos[i] * (mat / insc); den += pesos[i]; } // insc=0 => ciclo furado, ignora
+        if (insc > 0) { soma += mat / insc; n += 1; } // insc=0 => ciclo furado, ignora
       });
-      return den > 0 ? numr / den : NaN;
+      return n > 0 ? soma / n : NaN;
     };
 
     // As Is e Tendência por processo (base)
