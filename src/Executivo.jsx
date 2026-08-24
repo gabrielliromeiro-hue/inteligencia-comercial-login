@@ -1,4 +1,4 @@
-// VERSAO-CARDS-RECUP-V16 (cards self-paid e FIES da coluna Recup, sem CAC/CPI)
+// VERSAO-CARDS-FINAL-V17 (meta total = vagas cadastradas, card transferencias)
 import React, { useState, useEffect, useMemo } from "react";
 import * as E from "./lib/engine-core.js";
 import { carregarTudo, salvarReversao } from "./lib/dados.js";
@@ -478,10 +478,11 @@ export default function Executivo({ modo = "executivo" }) {
     const recupSelfPaid = (cenPorGrupo.selfpaid || {}).reversao || 0;
     const recupFies = (cenPorGrupo.fies || {}).reversao || 0;
     const recupOcupaVaga = subOcupaVaga.reversao || 0; // base para o % (self paid + fies + demais que ocupam vaga)
+    const recupTransf = ((cenPorGrupo.transf || {}).reversao || 0) + ((cenPorGrupo.transfFies || {}).reversao || 0); // Transf Externa + Transf FIES
 
     return { linhas, histTotal, projTotal, metaTotal, metaHist, matrizShare, ciclosHistoricos, alvo: cfg.alvo, cenario: cfg.cenario, cicloHist,
       projSelfPaid, projFies, projTransf, projTransfFies, projRecuperado,
-      recupSelfPaid, recupFies, recupOcupaVaga,
+      recupSelfPaid, recupFies, recupOcupaVaga, recupTransf,
       histSelfPaid, histFies, histTransf, histTransfFies, histRecuperado,
       convGlobalHist, cacHist, cpiHist, previsaoInscritos, vagasTot, projOcupaVaga, projNaoOcupa,
       funilEtapas, funilTotal, evolFunilTotal, evolFunilPorProc, ciclosFunil,
@@ -528,8 +529,8 @@ export default function Executivo({ modo = "executivo" }) {
       <div style={kpiGrid}>
         <div style={kpiCard}>
           <div style={kpiRot}>Meta total {D.alvo}</div>
-          <div style={{ ...kpiVal, color: "#0E1F1B" }}>{f0(D.projTotal)}</div>
-          <div style={kpiSub}>calouros previstos</div>
+          <div style={{ ...kpiVal, color: "#0E1F1B" }}>{D.vagasTot > 0 ? f0(D.vagasTot) : "—"}</div>
+          <div style={kpiSub}>{D.vagasTot > 0 ? "vagas · meta por processo" : "defina vagas na aba Sistema"}</div>
         </div>
         <div style={kpiCard}>
           <div style={kpiRot}>Self paid</div>
@@ -552,9 +553,9 @@ export default function Executivo({ modo = "executivo" }) {
           <div style={kpiSub}>topo de funil necessário</div>
         </div>
         <div style={kpiCard}>
-          <div style={kpiRot}>Vagas a preencher</div>
-          <div style={{ ...kpiVal, color: (D.vagasTot - D.projOcupaVaga) > 0 ? "#8A6100" : "#4A5C57" }}>{D.vagasTot > 0 ? f0(D.vagasTot - D.projOcupaVaga) : "—"}</div>
-          <div style={kpiSub}>{D.vagasTot > 0 ? "vaga = meta · exclui transf. e recuperado" : "defina vagas na aba Sistema"}</div>
+          <div style={kpiRot}>Transferências</div>
+          <div style={{ ...kpiVal, color: "#0E1F1B" }}>{D.recupTransf > 0 ? f0(D.recupTransf) : "—"}</div>
+          <div style={kpiSub}>Transf. Externa + Transf. FIES · recuperação</div>
         </div>
       </div>
 
