@@ -1,4 +1,4 @@
-// VERSAO-TOPO-V10 (topo nec = total/conv media 2 intakes, FIES fora)
+// VERSAO-CONV-3INTAKES-V11 (conversao ponderada 3 intakes, ignora furados)
 import React, { useState, useEffect, useMemo } from "react";
 import * as E from "./lib/engine-core.js";
 import { carregarTudo, salvarReversao } from "./lib/dados.js";
@@ -293,17 +293,19 @@ export default function Executivo({ modo = "executivo" }) {
     // calouro self-paid que ocupa vaga: Vestibular, Agendado, ENEM, Segunda Graduação (NÃO FIES, NÃO transferência)
     const ehCalouroSP = (p) => p.ocupaVaga !== false && ehSelfPaid(p.nome) && !ehTransfer(p.nome);
 
-    // conversão ponderada dos 2 últimos intakes homólogos (peso maior no recente): 0.65 / 0.35
+    // conversão conservadora: média PONDERADA dos 3 últimos intakes homólogos, peso maior no
+    // recente [recente 0.5, meio 0.3, antigo 0.2]. Ignora ciclo com dado furado (insc=0).
     const ciclosHomAll = st.ciclos.filter((c) => c.split(".")[1] === semH && c <= cicloHist).sort().reverse();
-    // conversão média dos 2 últimos intakes homólogos (agregada: soma matríc / soma insc)
     const conv2ultimos = (uId, pid) => {
-      const cs = ciclosHomAll.slice(0, 2); // [mais recente, anterior]
-      let sMat = 0, sInsc = 0;
-      cs.forEach((c) => {
-        sInsc += g(st.funil, `${c}|${uId}|${pid}`, "insc");
-        sMat += g(st.funil, `${c}|${uId}|${pid}`, "matric");
+      const cs = ciclosHomAll.slice(0, 3); // [mais recente, meio, antigo]
+      const pesos = [0.5, 0.3, 0.2];
+      let numr = 0, den = 0;
+      cs.forEach((c, i) => {
+        const insc = g(st.funil, `${c}|${uId}|${pid}`, "insc");
+        const mat = g(st.funil, `${c}|${uId}|${pid}`, "matric");
+        if (insc > 0) { numr += pesos[i] * (mat / insc); den += pesos[i]; } // insc=0 => ciclo furado, ignora
       });
-      return sInsc > 0 ? sMat / sInsc : NaN;
+      return den > 0 ? numr / den : NaN;
     };
 
     // As Is e Tendência por processo (base)
