@@ -1,4 +1,4 @@
-// VERSAO-TOPO-CONV-VISIVEL-V13 (topo por processo incl transf, conversao visivel)
+// VERSAO-FUNIL-CRONOLOGICO-V14 (3 intakes cronologicos, conv sobre inscricoes, card unificado)
 import React, { useState, useEffect, useMemo } from "react";
 import * as E from "./lib/engine-core.js";
 import { carregarTudo, salvarReversao } from "./lib/dados.js";
@@ -148,14 +148,9 @@ export default function Executivo({ modo = "executivo" }) {
     alvoUnis.forEach((u) => st.canais.forEach((c) => { invHist += g(st.canal, `${cicloHist}|${u}|${c.id}`, "inv"); }));
     const convGlobalHist = div(matHistG, inscHist);
 
-    // CAC, CPI e previsão de inscritos (projetados para o alvo)
-    // usa a razão histórica investimento/matrícula e investimento/inscrição, aplicada à meta
+    // CAC, CPI (projetados para o alvo) — usa a razão histórica investimento/matrícula e /inscrição
     const cacHist = div(invHist, matHistG);
     const cpiHist = div(invHist, inscHist);
-    const previsaoInscritos = st.processos.reduce((a, p) => {
-      // inscritos previstos = matrícula prevista / (conversão histórica do processo, aprox global)
-      return a + (isFinite(convGlobalHist) && convGlobalHist > 0 ? (projAgg[p.id] || 0) / convGlobalHist : 0);
-    }, 0);
 
     // vagas (= meta) e ociosidade da holding/unidade
     let vagasTot = 0;
@@ -293,17 +288,18 @@ export default function Executivo({ modo = "executivo" }) {
     // calouro self-paid que ocupa vaga: Vestibular, Agendado, ENEM, Segunda Graduação (NÃO FIES, NÃO transferência)
     const ehCalouroSP = (p) => p.ocupaVaga !== false && ehSelfPaid(p.nome) && !ehTransfer(p.nome);
 
-    // conversão conservadora: média SIMPLES dos 3 últimos intakes homólogos (cada ano conta
-    // igual: soma as conversões e divide pela quantidade). Ignora ciclo com dado furado (insc=0).
-    const ciclosHomAll = st.ciclos.filter((c) => c.split(".")[1] === semH && c <= cicloHist).sort().reverse();
+    // conversão para o topo: média SIMPLES das conversões (matrículas ÷ inscrições) dos 3 últimos
+    // intakes CRONOLÓGICOS (qualquer semestre, imediatamente anteriores ao alvo). Cada intake conta
+    // igual. Ignora ciclo com inscrição 0 (furado). Segue o alvo: muda sozinha quando o alvo muda.
+    const ciclosAntesAlvo = st.ciclos.filter((c) => c < cfg.alvo).sort().reverse(); // mais recente primeiro
     const conv2ultimos = (uId, pid) => {
-      const cs = ciclosHomAll.slice(0, 3); // [mais recente, meio, antigo]
       let soma = 0, n = 0;
-      cs.forEach((c) => {
+      for (const c of ciclosAntesAlvo) {
+        if (n >= 3) break; // só os 3 últimos com dado válido
         const insc = g(st.funil, `${c}|${uId}|${pid}`, "insc");
         const mat = g(st.funil, `${c}|${uId}|${pid}`, "matric");
-        if (insc > 0) { soma += mat / insc; n += 1; } // insc=0 => ciclo furado, ignora
-      });
+        if (insc > 0) { soma += mat / insc; n += 1; } // insc=0 => furado, pula (não conta como um dos 3)
+      }
       return n > 0 ? soma / n : NaN;
     };
 
@@ -404,6 +400,11 @@ export default function Executivo({ modo = "executivo" }) {
         editavel: ehCalouroSP(b.p) || ehTransfer(b.p.nome) };
     });
     const travaInfo = {}; // soma-zero conserva a vaga, sem trava
+
+    // PREVISÃO DE INSCRITOS (unificada com a coluna Topo nec.): soma as inscrições necessárias
+    // de cada processo do cenário Recuperação, com a conversão por processo (3 últimos intakes).
+    // FIES fica de fora (inscRev null). Mesmo número que a soma da coluna Topo nec.
+    const previsaoInscritos = cenariosProc.reduce((a, x) => a + (x.inscRev || 0), 0);
 
     // totais e por grupo
     const cenTotal = cenariosProc.reduce((a, x) => ({ asIs: a.asIs + x.asIs, tend: a.tend + x.tend, reversao: a.reversao + x.reversao }), { asIs: 0, tend: 0, reversao: 0 });
