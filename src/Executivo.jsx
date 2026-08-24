@@ -1,4 +1,4 @@
-// VERSAO-FUNIL-CRONOLOGICO-V14 (3 intakes cronologicos, conv sobre inscricoes, card unificado)
+// VERSAO-JANELA-FIXA-V15 (janela fixa 3 ultimos, usa so os validos dentro dela)
 import React, { useState, useEffect, useMemo } from "react";
 import * as E from "./lib/engine-core.js";
 import { carregarTudo, salvarReversao } from "./lib/dados.js";
@@ -289,17 +289,17 @@ export default function Executivo({ modo = "executivo" }) {
     const ehCalouroSP = (p) => p.ocupaVaga !== false && ehSelfPaid(p.nome) && !ehTransfer(p.nome);
 
     // conversão para o topo: média SIMPLES das conversões (matrículas ÷ inscrições) dos 3 últimos
-    // intakes CRONOLÓGICOS (qualquer semestre, imediatamente anteriores ao alvo). Cada intake conta
-    // igual. Ignora ciclo com inscrição 0 (furado). Segue o alvo: muda sozinha quando o alvo muda.
-    const ciclosAntesAlvo = st.ciclos.filter((c) => c < cfg.alvo).sort().reverse(); // mais recente primeiro
+    // intakes CRONOLÓGICOS (janela fixa: os 3 ciclos imediatamente anteriores ao alvo, qualquer
+    // semestre). Dentro dessa janela, usa só os ciclos com inscrição > 0 — NÃO busca ciclos mais
+    // antigos para completar 3. Se só 1 dos 3 tem dado, usa esse 1. Segue o alvo automaticamente.
+    const janela3 = st.ciclos.filter((c) => c < cfg.alvo).sort().reverse().slice(0, 3); // os 3 últimos, fixos
     const conv2ultimos = (uId, pid) => {
       let soma = 0, n = 0;
-      for (const c of ciclosAntesAlvo) {
-        if (n >= 3) break; // só os 3 últimos com dado válido
+      janela3.forEach((c) => {
         const insc = g(st.funil, `${c}|${uId}|${pid}`, "insc");
         const mat = g(st.funil, `${c}|${uId}|${pid}`, "matric");
-        if (insc > 0) { soma += mat / insc; n += 1; } // insc=0 => furado, pula (não conta como um dos 3)
-      }
+        if (insc > 0) { soma += mat / insc; n += 1; } // dentro da janela, só os que têm inscrição
+      });
       return n > 0 ? soma / n : NaN;
     };
 
