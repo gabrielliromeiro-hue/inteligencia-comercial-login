@@ -1,4 +1,4 @@
-// VERSAO-JANELA-FIXA-V15 (janela fixa 3 ultimos, usa so os validos dentro dela)
+// VERSAO-CARDS-RECUP-V16 (cards self-paid e FIES da coluna Recup, sem CAC/CPI)
 import React, { useState, useEffect, useMemo } from "react";
 import * as E from "./lib/engine-core.js";
 import { carregarTudo, salvarReversao } from "./lib/dados.js";
@@ -474,8 +474,14 @@ export default function Executivo({ modo = "executivo" }) {
       alvo.asIs += x.asIs; alvo.tend += x.tend; alvo.reversao += x.reversao;
     });
 
+    // valores do cenário RECUPERAÇÃO para os cards de topo (mudam quando edita a coluna Recup.)
+    const recupSelfPaid = (cenPorGrupo.selfpaid || {}).reversao || 0;
+    const recupFies = (cenPorGrupo.fies || {}).reversao || 0;
+    const recupOcupaVaga = subOcupaVaga.reversao || 0; // base para o % (self paid + fies + demais que ocupam vaga)
+
     return { linhas, histTotal, projTotal, metaTotal, metaHist, matrizShare, ciclosHistoricos, alvo: cfg.alvo, cenario: cfg.cenario, cicloHist,
       projSelfPaid, projFies, projTransf, projTransfFies, projRecuperado,
+      recupSelfPaid, recupFies, recupOcupaVaga,
       histSelfPaid, histFies, histTransf, histTransfFies, histRecuperado,
       convGlobalHist, cacHist, cpiHist, previsaoInscritos, vagasTot, projOcupaVaga, projNaoOcupa,
       funilEtapas, funilTotal, evolFunilTotal, evolFunilPorProc, ciclosFunil,
@@ -518,7 +524,7 @@ export default function Executivo({ modo = "executivo" }) {
 
       {/* ===== CONTEÚDO EXECUTIVO ===== */}
       {modo === "executivo" && (<>
-      {/* KPIs de topo: composição self paid x FIES + conversão global */}
+      {/* KPIs de topo: composição self paid x FIES (da coluna Recup. Self-Paid) + conversão */}
       <div style={kpiGrid}>
         <div style={kpiCard}>
           <div style={kpiRot}>Meta total {D.alvo}</div>
@@ -527,28 +533,18 @@ export default function Executivo({ modo = "executivo" }) {
         </div>
         <div style={kpiCard}>
           <div style={kpiRot}>Self paid</div>
-          <div style={{ ...kpiVal, color: "#0F5F4E" }}>{f0(D.projSelfPaid)}</div>
-          <div style={kpiSub}>{pct(div(D.projSelfPaid, D.projTotal))} da meta · sem FIES</div>
+          <div style={{ ...kpiVal, color: "#0F5F4E" }}>{f0(D.recupSelfPaid)}</div>
+          <div style={kpiSub}>{pct(div(D.recupSelfPaid, D.recupOcupaVaga))} da vaga · recuperação</div>
         </div>
         <div style={kpiCard}>
           <div style={kpiRot}>FIES</div>
-          <div style={{ ...kpiVal, color: "#8A6100" }}>{f0(D.projFies)}</div>
-          <div style={kpiSub}>{pct(div(D.projFies, D.projTotal))} da meta · calouro à parte</div>
+          <div style={{ ...kpiVal, color: "#8A6100" }}>{f0(D.recupFies)}</div>
+          <div style={kpiSub}>{pct(div(D.recupFies, D.recupOcupaVaga))} da vaga · recuperação</div>
         </div>
         <div style={kpiCard}>
           <div style={kpiRot}>Conversão global {D.cicloHist}</div>
           <div style={{ ...kpiVal, color: "#0E1F1B" }}>{pct(D.convGlobalHist, 1)}</div>
           <div style={kpiSub}>inscrito → matriculado</div>
-        </div>
-        <div style={kpiCard}>
-          <div style={kpiRot}>CAC previsto</div>
-          <div style={{ ...kpiVal, color: "#0E1F1B", fontSize: 20 }}>{isFinite(D.cacHist) && D.cacHist > 0 ? brl(D.cacHist) : "—"}</div>
-          <div style={kpiSub}>custo por matrícula</div>
-        </div>
-        <div style={kpiCard}>
-          <div style={kpiRot}>CPI previsto</div>
-          <div style={{ ...kpiVal, color: "#0E1F1B", fontSize: 20 }}>{isFinite(D.cpiHist) && D.cpiHist > 0 ? brl(D.cpiHist) : "—"}</div>
-          <div style={kpiSub}>custo por inscrição</div>
         </div>
         <div style={kpiCard}>
           <div style={kpiRot}>Previsão de inscritos</div>
