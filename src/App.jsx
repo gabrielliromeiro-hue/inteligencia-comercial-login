@@ -4,6 +4,7 @@ import Login from "./Login.jsx";
 import Admin from "./Admin.jsx";
 import Planejamento from "./Planejamento.jsx";
 import Executivo from "./Executivo.jsx";
+import MetaInscritos from "./MetaInscritos.jsx";
 import Insights from "./Insights.jsx";
 import { meuPerfil, sair } from "./lib/dados.js";
 
@@ -57,6 +58,7 @@ export default function App() {
           <span style={{ fontFamily: "Georgia,serif", fontSize: 16, color: "#fff" }}>Inteligencia Comercial</span>
           <nav style={{ display: "flex", gap: 4 }}>
             <TabBtn on={aba === "executivo"} onClick={() => setAba("executivo")}>Visão Executiva</TabBtn>
+            <TabBtn on={aba === "metainscritos"} onClick={() => setAba("metainscritos")}>Meta inscritos</TabBtn>
             <TabBtn on={aba === "funil"} onClick={() => setAba("funil")}>Funil</TabBtn>
             <TabBtn on={aba === "insights"} onClick={() => setAba("insights")}>Insights</TabBtn>
             <TabBtn on={aba === "sistema"} onClick={() => setAba("sistema")}>Sistema</TabBtn>
@@ -75,6 +77,7 @@ export default function App() {
       <div style={{ padding: "20px", maxWidth: 1500, margin: "0 auto" }}>
         {aba === "admin" && ehAdmin && <Admin meuId={perfil.id} />}
         {aba === "executivo" && <Executivo />}
+        {aba === "metainscritos" && <MetaInscritos />}
         {aba === "funil" && <Executivo modo="funil" />}
         {aba === "insights" && <Insights />}
         {aba === "sistema" && <Planejamento podeEditar={podeEditar} />}
