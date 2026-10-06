@@ -1,4 +1,4 @@
-// VERSAO-META-INSCRITOS-V1
+// VERSAO-META-INSCRITOS-V2 (As Is homologo, bate com Visao Executiva)
 import React, { useState, useEffect, useMemo } from "react";
 import { carregarTudo } from "./lib/dados.js";
 
@@ -36,8 +36,13 @@ export default function MetaInscritos() {
     const alvoUnis = uniSel === "__holding__" ? st.unidades.map((u) => u.id) : [uniSel];
     const g = (o, k, c) => num((o[k] || {})[c]);
 
-    // janela dos 3 últimos intakes cronológicos antes do alvo
+    // janela dos 3 últimos intakes cronológicos antes do alvo (para conversão do topo)
     const janela3 = st.ciclos.filter((c) => c < alvo).sort().reverse().slice(0, 3);
+    // As Is = ciclo HOMÓLOGO mais recente antes do alvo (mesma regra da Visão Executiva).
+    // Para alvo 2027.1 (semestre .1), o As Is é 2026.1, não 2026.2 (que está incompleto).
+    const semAlvo = String(alvo).split(".")[1];
+    const homo = st.ciclos.filter((c) => c < alvo && c.split(".")[1] === semAlvo).sort().reverse();
+    const cicloAsIs = homo[0] || st.ciclos.filter((c) => c < alvo).sort().reverse()[0] || st.ciclos[0];
 
     // conversão inscrito->matrícula (média simples, ignora furados)
     const convMatric = (uId, pid) => {
@@ -60,7 +65,6 @@ export default function MetaInscritos() {
       return n > 0 ? soma / n : NaN;
     };
 
-    const cicloHist = janela3[0]; // mais recente, como As Is
     const TRANSF_PADRAO = 8;
 
     // calcula as matrículas do cenário RECUPERAÇÃO por processo (mesma mecânica da Visão Executiva)
@@ -70,7 +74,7 @@ export default function MetaInscritos() {
     alvoUnis.forEach((u) => {
       const mU = st.meta[`${alvo}|${u}`] || {};
       const asIsU = {};
-      st.processos.forEach((p) => (asIsU[p.id] = g(st.funil, `${cicloHist}|${u}|${p.id}`, "matric")));
+      st.processos.forEach((p) => (asIsU[p.id] = g(st.funil, `${cicloAsIs}|${u}|${p.id}`, "matric")));
 
       const revU = {};
       const foiEditado = {};
@@ -115,7 +119,7 @@ export default function MetaInscritos() {
         const cm = convMatric(u, p.id);
         const tp = taxaPagto(u, p.id);
         const mU = st.meta[`${alvo}|${u}`] || {};
-        const asIsU = g(st.funil, `${cicloHist}|${u}|${p.id}`, "matric");
+        const asIsU = g(st.funil, `${cicloAsIs}|${u}|${p.id}`, "matric");
         const peso = Math.max(asIsU, 1); // pondera pela presença histórica da praça no processo
         if (isFinite(cm) && cm > 0) { numConv += cm * peso; denConv += peso; }
         if (isFinite(tp) && tp > 0) { numPag += tp * peso; denPag += peso; }
