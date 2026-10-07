@@ -1,4 +1,4 @@
-// VERSAO-CARDS-FINAL-V17 (meta total = vagas cadastradas, card transferencias)
+// VERSAO-REORG-ABAS-V18 (executiva enxuta + aba ajustes + share no funil)
 import React, { useState, useEffect, useMemo } from "react";
 import * as E from "./lib/engine-core.js";
 import { carregarTudo, salvarReversao } from "./lib/dados.js";
@@ -502,9 +502,9 @@ export default function Executivo({ modo = "executivo" }) {
       <div style={header}>
         <div>
           <div style={eyebrow}>Planejamento comercial · Clariens</div>
-          <h1 style={titulo}>{modo === "funil" ? "Funil por ciclo" : "Matrículas por entrada"} · {D.alvo}</h1>
+          <h1 style={titulo}>{modo === "funil" ? "Funil por ciclo" : modo === "ajustes" ? "Ajustes e operação" : "Matrículas por entrada"} · {D.alvo}</h1>
         </div>
-        {modo === "executivo" && <div style={cenarioTag}>Cenário {cenarioLabel}</div>}
+        {(modo === "executivo" || modo === "ajustes") && <div style={cenarioTag}>Cenário {cenarioLabel}</div>}
       </div>
 
       {/* Filtros */}
@@ -665,8 +665,12 @@ export default function Executivo({ modo = "executivo" }) {
         </div>
       </div>
 
+      </>)}
+
+      {/* ===== CONTEÚDO AJUSTES (operação) ===== */}
+      {modo === "ajustes" && (<>
       {/* Grade editável de recuperação: % por processo self-paid + transferência */}
-      {editRev && (
+      {true && (
         <div style={card}>
           <div style={cardH}>Ajuste da Recuperação Self-Paid {uniSel === "__holding__" ? "por praça" : "— " + D.nomeUni}</div>
           <div style={{ padding: "10px 16px 0", fontSize: 12, color: "#4A5C57", lineHeight: 1.5 }}>
@@ -727,7 +731,10 @@ export default function Executivo({ modo = "executivo" }) {
           <div style={legenda}>Texto gerado por regras a partir do diagnóstico (queda homóloga, conversão histórica, esforço de topo). Edite antes de levar ao board — é um rascunho de defesa, não um texto final.</div>
         </div>
       )}
+      </>)}
 
+      {/* ===== CONTEÚDO EXECUTIVO (continuação: conversão + comparação) ===== */}
+      {modo === "executivo" && (<>
       {/* Conversão por praça (self-paid calouro vs transferência) */}
       {D.convPorPraca && D.convPorPraca.length > 0 && (
         <div style={card}>
@@ -798,7 +805,10 @@ export default function Executivo({ modo = "executivo" }) {
           <div style={legenda}>CAC projetado no volume da meta (com saturação). <b>Conv. ref.</b> = conversão inscrito→matrícula do ciclo {D.cicloRefE}. Gap em <span style={{ color: "#9B1C1C" }}>vermelho</span> = investimento maior que a verba.</div>
         </div>
       )}
+      </>)}
 
+      {/* ===== CONTEÚDO AJUSTES (continuação: eficiência de verba) ===== */}
+      {modo === "ajustes" && (<>
       {/* Eficiência de verba por canal */}
       {(D.canalEsc.length > 0 || D.canalNaoEsc.length > 0) && (
         <div style={card}>
@@ -837,7 +847,10 @@ export default function Executivo({ modo = "executivo" }) {
           <div style={legenda}>★ = canal escalável mais eficiente (menor CAC projetado): onde o próximo real de verba tende a render mais matrícula. Atenção: CAC baixo em canal que não escala (indicação) não é acionável — não adianta "investir mais" onde o volume não responde a verba.</div>
         </div>
       )}
+      </>)}
 
+      {/* ===== CONTEÚDO EXECUTIVO (continuação: tabela de matrículas por processo) ===== */}
+      {modo === "executivo" && (<>
       {/* Tabela principal */}
       <div style={card}>
         <div style={cardH}>Matrículas por processo de entrada — {D.cicloHist} (real) vs {D.alvo} (previsto)</div>
@@ -1000,8 +1013,8 @@ export default function Executivo({ modo = "executivo" }) {
       </>)}
       {/* ===== FIM BLOCO FUNIL ===== */}
 
-      {/* ===== CONTEÚDO EXECUTIVO (parte 2) ===== */}
-      {modo === "executivo" && (<>
+      {/* ===== CONTEÚDO FUNIL (parte 2: share por processo, movido da Executiva) ===== */}
+      {modo === "funil" && (<>
       {/* Matriz share por periodo */}
       <div style={card}>
         <div style={cardH}>Evolução do share por processo — todos os ciclos + previsão {D.alvo}</div>

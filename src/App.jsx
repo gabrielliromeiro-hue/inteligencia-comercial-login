@@ -59,6 +59,7 @@ export default function App() {
           <nav style={{ display: "flex", gap: 4 }}>
             <TabBtn on={aba === "executivo"} onClick={() => setAba("executivo")}>Visão Executiva</TabBtn>
             <TabBtn on={aba === "metainscritos"} onClick={() => setAba("metainscritos")}>Meta inscritos</TabBtn>
+            <TabBtn on={aba === "ajustes"} onClick={() => setAba("ajustes")}>Ajustes</TabBtn>
             <TabBtn on={aba === "funil"} onClick={() => setAba("funil")}>Funil</TabBtn>
             <TabBtn on={aba === "insights"} onClick={() => setAba("insights")}>Insights</TabBtn>
             <TabBtn on={aba === "sistema"} onClick={() => setAba("sistema")}>Sistema</TabBtn>
@@ -78,6 +79,7 @@ export default function App() {
         {aba === "admin" && ehAdmin && <Admin meuId={perfil.id} />}
         {aba === "executivo" && <Executivo />}
         {aba === "metainscritos" && <MetaInscritos />}
+        {aba === "ajustes" && <Executivo modo="ajustes" />}
         {aba === "funil" && <Executivo modo="funil" />}
         {aba === "insights" && <Insights />}
         {aba === "sistema" && <Planejamento podeEditar={podeEditar} />}
